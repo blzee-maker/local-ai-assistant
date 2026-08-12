@@ -10,17 +10,18 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.knownfolders import user_folders
+
 
 def _default_file_dirs() -> list[str]:
-    """Folders the app is allowed to browse/ingest from (only existing ones matter)."""
-    home = Path.home()
+    """Folders the app is allowed to browse/ingest from (only existing ones matter).
+
+    Resolved through the OS known-folder API rather than joining onto ``~`` — a
+    redirected profile (OneDrive Backup) leaves a decoy folder at the old path,
+    and joining would point the whole assistant at it. See app/knownfolders.py.
+    """
     project_samples = Path(__file__).resolve().parent / "sample_docs"
-    return [
-        str(home / "Downloads"),
-        str(home / "Documents"),
-        str(home / "Desktop"),
-        str(project_samples),
-    ]
+    return [str(p) for p in user_folders()] + [str(project_samples)]
 
 
 class Settings(BaseSettings):
