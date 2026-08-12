@@ -22,3 +22,11 @@ voices/
 Thumbs.db
 .idea/
 .vscode/
+
+# Analyzer state
+data/analyzer.sqlite3
+data/consent.json
+data/cli_history.txt
+
+# Tests
+.pytest_cache/

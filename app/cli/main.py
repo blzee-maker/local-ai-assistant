@@ -220,6 +220,77 @@ def listen(
 
 
 @cli.command()
+def scan(
+    export: str = typer.Option(None, "--export", "-e", help="Write a Markdown report."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the report as JSON."),
+    no_integrity: bool = typer.Option(False, "--no-integrity", help="Skip format checks."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Re-hash everything."),
+    top: int = typer.Option(10, "--top", "-n", help="Rows per section."),
+    cleanup_script: str = typer.Option(
+        None, "--cleanup-script", help="Write a reviewable delete script (never runs it)."
+    ),
+) -> None:
+    """Analyse your allowed folders for duplicates, corruption, and idle storage."""
+    from pathlib import Path
+
+    from rich.progress import (
+        BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn,
+    )
+
+    from app.analyzer import report as report_mod
+    from app.analyzer import run_scan
+    from app.consent import ensure_consent
+
+    if not ensure_consent(console):
+        raise typer.Exit(1)
+
+    if as_json:
+        result = run_scan(check_integrity=not no_integrity, use_cache=not no_cache)
+    else:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[meta]{task.description}[/meta]"),
+            BarColumn(bar_width=28),
+            TextColumn("[meta]{task.completed}/{task.total}[/meta]"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Starting", total=None)
+
+            def on_phase(name: str) -> None:
+                progress.update(task, description=name, completed=0, total=None)
+
+            def on_progress(done: int, total: int) -> None:
+                progress.update(task, completed=done, total=total or None)
+
+            result = run_scan(
+                check_integrity=not no_integrity,
+                use_cache=not no_cache,
+                on_phase=on_phase,
+                on_progress=on_progress,
+            )
+
+    if as_json:
+        print(json.dumps(result.to_dict(), indent=2, default=str))
+        return
+
+    report_mod.render_console(result, console, top=top)
+
+    if export:
+        Path(export).write_text(report_mod.to_markdown(result), encoding="utf-8")
+        console.print(f"\n[ok]report written to {export}[/ok]")
+
+    if cleanup_script:
+        target = Path(cleanup_script)
+        count = report_mod.deletion_script(result, target)
+        console.print(
+            f"[ok]cleanup script written to {target}[/ok] "
+            f"[meta]{count} file(s) listed — review it before running[/meta]"
+        )
+
+
+@cli.command()
 def models() -> None:
     """List models available from the local inference backend."""
     health = _assistant().health()
@@ -229,6 +300,47 @@ def models() -> None:
     for name in health["models"]:
         marker = "[ok]*[/ok]" if name == health["model"] else " "
         console.print(f" {marker} {name}")
+
+
+@cli.command()
+def consent(
+    grant: bool = typer.Option(False, "--grant", help="Approve local file analysis."),
+    revoke: bool = typer.Option(False, "--revoke", help="Withdraw approval."),
+) -> None:
+    """Show or change permission for the assistant to analyse your files."""
+    from app import consent as consent_mod
+
+    if grant and revoke:
+        err_console.print("[err]--grant and --revoke are mutually exclusive[/err]")
+        raise typer.Exit(1)
+
+    if revoke:
+        consent_mod.revoke()
+        console.print("[ok]Approval withdrawn.[/ok] [meta]You'll be asked again next time.[/meta]")
+        return
+
+    if grant:
+        record = consent_mod.grant()
+        console.print("[ok]File analysis approved for:[/ok]")
+        for root in record.approved_roots:
+            console.print(f"  [meta]{root}[/meta]")
+        return
+
+    state, record = consent_mod.status()
+    labels = {
+        "none": "[warn]not yet asked[/warn]",
+        "granted": "[ok]granted[/ok]",
+        "declined": "[err]declined[/err]",
+        "stale": "[warn]needs re-approval — the folder list changed[/warn]",
+    }
+    console.print(f"Status: {labels[state]}")
+    if record and record.approved_roots:
+        import datetime
+
+        when = datetime.datetime.fromtimestamp(record.decided_at).strftime("%Y-%m-%d %H:%M")
+        console.print(f"[meta]decided {when}[/meta]")
+        for root in record.approved_roots:
+            console.print(f"  [meta]{root}[/meta]")
 
 
 @cli.command()
