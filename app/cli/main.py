@@ -271,11 +271,21 @@ def scan(
                 on_progress=on_progress,
             )
 
+    # Cache the findings so `ask`/`chat` can answer disk questions without
+    # re-scanning (which would take tens of seconds inside a chat turn).
+    from app.core import diskintent
+
+    diskintent.save_report(result)
+
     if as_json:
         print(json.dumps(result.to_dict(), indent=2, default=str))
         return
 
     report_mod.render_console(result, console, top=top)
+    console.print(
+        "[meta]You can now ask about this in chat, e.g. "
+        '"which duplicate files are wasting the most space?"[/meta]'
+    )
 
     if export:
         Path(export).write_text(report_mod.to_markdown(result), encoding="utf-8")

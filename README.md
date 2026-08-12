@@ -74,6 +74,8 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 | `ingest <path>` | Index a document for retrieval |
 | `docs` | List indexed documents (`--reset` to wipe) |
 | `find <query>` | Search your allowed folders |
+| `scan` | Analyse your folders for duplicates, corruption, idle storage |
+| `consent` | Show or change permission to analyse your files |
 | `say <text>` | Speak text aloud (`--out file.wav` to save instead) |
 | `listen` | Record from the mic and transcribe (`--ask` to answer it) |
 | `models` | List locally available models |
@@ -106,6 +108,80 @@ question with and without `--rag` to see the difference.
   and keeps each heading attached to its body. This matters: naive fixed-width
   chunking sliced "HIPAA" in half and detached the "Compliance" heading, dropping
   that chunk from rank 1 to rank 6 and causing the model to miss the answer.
+
+## Disk analysis
+
+```bash
+python assistant.py scan                                 # report to the terminal
+python assistant.py scan --export report.md              # full findings to a file
+python assistant.py scan --cleanup-script cleanup.ps1    # a script you review and run
+python assistant.py ask "what's wasting the most space?"  # ask about the last scan
+```
+
+The first run asks permission, showing exactly which folders it would read.
+Approval is recorded per folder in `data/consent.json`, and **re-prompts if the
+folder list ever changes** — approving Downloads once must not silently become
+approval of a folder added months later. `assistant consent --revoke` withdraws it.
+
+The report covers four things:
+
+- **Duplicates** — byte-identical files, ranked by recoverable space
+- **Integrity** — files whose format is verifiably broken or mislabelled
+- **Large and unused** — big files nobody has opened in a long time
+- **Storage breakdown** — where the space actually goes
+
+### It never deletes anything
+
+The scanner is read-only; `tests/test_safety.py` enforces that structurally by
+parsing the package for write calls. `--cleanup-script` writes a **PowerShell
+script you review and run yourself**, and it sends files to the **Recycle Bin**
+rather than deleting them. The assistant proposes; you dispose.
+
+### On "corrupt files" — what is actually being claimed
+
+Generic corruption detection is not possible. A truncated MP4 and a healthy one
+are both just bytes. So this verifies only what it can prove — PDF structure,
+ZIP/OOXML containers, image decoding, JSON parsing, signature-vs-extension
+agreement — and reports everything else as `unverifiable` rather than implying
+it is healthy. The report states how many files it could not check, so "no
+problems found" is never mistaken for a clean bill of health.
+
+Even `ok` is a specific claim: the file **decodes**, not that its content is
+complete. No decoder can know how many rows a photographer originally captured
+(see `tests/test_integrity.py::test_known_limit_repaired_stream_is_reported_decodable`).
+
+### What a real profile taught this code
+
+Every one of these was found by running the scanner against a real Windows
+profile, not by reading the code:
+
+- **21 phone photos were reported corrupt.** Samsung appends a `SEFT` metadata
+  trailer *after* the JPEG end-of-image marker, so a tail-only check never saw
+  it. Searching a wider window for the marker then failed the opposite way — a
+  stray `FFD9` inside a motion photo's embedded video made a half-truncated file
+  look complete. Verdicts now come from an actual decode.
+- **Encrypted PDFs were reported corrupt.** A password-protected file is intact,
+  merely closed to us → `unverifiable`.
+- **Office `~$name.xlsx` lock stubs were reported corrupt.** Normal artifacts.
+- **Hashing destroyed the signal it depended on.** Reading a file to fingerprint
+  it updates its access time, so the "unused files" list shrank from 5 entries to
+  3 between consecutive runs purely because of the scan's own reads. The earliest
+  access time ever observed is now persisted and preferred. Restoring times with
+  `os.utime()` was rejected: this package must never write to user files.
+- **The cleanup script was BOM-less UTF-8**, which PowerShell 5.1 decodes as
+  ANSI — any path with an accent or emoji would have been mangled, and a delete
+  script aimed at a mangled path is not acceptable. Now `utf-8-sig`.
+
+Three files really were mislabelled: a government portal had saved Java
+serialized object streams with a `.pdf` extension.
+
+### Cost control
+
+Hashing every file to find duplicates reads the whole disk to discover that most
+files are unique. Instead: group by size (no I/O), fingerprint 8 KB from each end,
+and full-hash only the survivors. Results are cached in SQLite keyed on path +
+size + mtime, so a rescan is near-instant. A 7 GB / 1,970-file profile scans in
+about 25 seconds cold.
 
 ## Talk to it (voice)
 
@@ -187,6 +263,17 @@ All generation uses a **single fixed `num_ctx`** (see `config.py`). Ollama
 reloads the whole model whenever `num_ctx` changes, so mixing context sizes
 between requests caused a ~25s reload on every switch between normal chat and a
 file request. Holding it constant keeps the model warm.
+
+## Tests
+
+```bash
+python -m pytest tests/ -q
+```
+
+42 tests, all using synthesized fixtures so the suite never reads personal
+files. They cover both directions of the integrity verifier (healthy files must
+not be flagged; damaged files must be), the staged duplicate detector, the
+consent scope rules, and the read-only guarantee.
 
 ## Configuration
 

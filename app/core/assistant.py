@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator, Literal
 
 from app import files as filesvc
-from app.core import fileintent
+from app.core import diskintent, fileintent
 from app.engines import ChatMessage, GenerationOptions, build_engine
 from app.engines.base import LLMEngine
 from config import settings
@@ -262,13 +262,34 @@ class Assistant:
                 0, ChatMessage(role="system", content=DEFAULT_SYSTEM_PROMPT)
             )
 
-        # Model-driven file opening: if the latest message asks for a local file,
-        # let the model choose it, fetch the newest match, ground on its text.
-        opened_file: dict[str, Any] | None = None
         last_user_text = next(
             (m.content for m in reversed(turn_history) if m.role == "user"), ""
         )
-        if allow_file_access and fileintent.looks_like_file_request(last_user_text):
+
+        # Disk questions are answered from the last cached scan. Checked before
+        # file-opening because "find my duplicate files" trips both gates, and
+        # the scan data is the better answer.
+        grounded_on_scan = False
+        if diskintent.looks_like_disk_question(last_user_text):
+            grounded, note = diskintent.ground_prompt(last_user_text)
+            last_user = next(
+                (m for m in reversed(turn_history) if m.role == "user"), None
+            )
+            if grounded and last_user is not None:
+                last_user.content = grounded
+                grounded_on_scan = True
+            elif note:
+                turn_history.insert(1, ChatMessage(role="system", content=note))
+                grounded_on_scan = True
+
+        # Model-driven file opening: if the latest message asks for a local file,
+        # let the model choose it, fetch the newest match, ground on its text.
+        opened_file: dict[str, Any] | None = None
+        if (
+            not grounded_on_scan
+            and allow_file_access
+            and fileintent.looks_like_file_request(last_user_text)
+        ):
             opened_file, correction = self._try_open_file(turn_history)
             if correction:
                 turn_history.insert(1, ChatMessage(role="system", content=correction))
@@ -276,7 +297,7 @@ class Assistant:
         # RAG: retrieve context for the latest user turn and ground the prompt.
         # Skipped when a file was just opened — that message is already grounded.
         sources: list[dict[str, Any]] = []
-        if opened_file is None and use_rag and self.rag.count > 0:
+        if opened_file is None and not grounded_on_scan and use_rag and self.rag.count > 0:
             last_user = next(
                 (m for m in reversed(turn_history) if m.role == "user"), None
             )

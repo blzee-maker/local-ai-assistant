@@ -273,19 +273,27 @@ def to_markdown(report: ScanReport) -> str:
 
 
 def to_prompt_text(report: ScanReport, *, limit: int = 12) -> str:
-    """A compact digest the model can answer questions from."""
+    """A compact digest the model can answer questions from.
+
+    Entries are explicitly rank-numbered and labelled as pre-sorted. An earlier
+    version emitted a plain bulleted list in sorted order, and the 3B model
+    answered "the biggest duplicate" with the sixth item — small models do not
+    reliably infer ordering from position alone. Stating the rank costs a few
+    tokens and removes the guesswork.
+    """
     lines: list[str] = [
         f"Disk scan of {', '.join(report.roots)}",
         f"{report.stats.files_seen:,} files, {human_bytes(report.stats.bytes_seen)} total.",
         "",
         f"DUPLICATES: {len(report.duplicate_groups)} groups wasting "
-        f"{human_bytes(report.wasted_bytes)}.",
+        f"{human_bytes(report.wasted_bytes)} in total.",
+        "Ranked by wasted space, #1 is the largest:",
     ]
-    for group in report.duplicate_groups[:limit]:
+    for rank, group in enumerate(report.duplicate_groups[:limit], 1):
         lines.append(
-            f"- {group.count} copies of {group.keeper.name} "
-            f"({human_bytes(group.size)} each, {human_bytes(group.wasted_bytes)} wasted); "
-            f"keep {group.keeper.path}"
+            f"#{rank}. {group.keeper.name} — wastes {human_bytes(group.wasted_bytes)} "
+            f"({group.count} copies, {human_bytes(group.size)} each). "
+            f"Keep: {group.keeper.path}"
         )
 
     lines.append("")
@@ -294,19 +302,23 @@ def to_prompt_text(report: ScanReport, *, limit: int = 12) -> str:
         f"{len(report.problems)} problems, "
         f"{report.unverifiable_count:,} unverifiable (health unknown, not assumed good)."
     )
-    for result in report.problems[:limit]:
-        lines.append(f"- {result.verdict.value}: {result.entry.path} — {result.detail}")
+    for rank, result in enumerate(report.problems[:limit], 1):
+        lines.append(
+            f"#{rank}. {result.entry.name} — {result.verdict.value}: {result.detail} "
+            f"(at {result.entry.path})"
+        )
 
     signal = "last opened" if report.atime_usable else "last modified"
     lines.append("")
     lines.append(
-        f"UNUSED (by {signal}): {len(report.stale_files)} files, "
+        f"UNUSED (by {signal}): {len(report.stale_files)} files totalling "
         f"{human_bytes(report.stale_bytes)}."
     )
-    for stale in report.stale_files[:limit]:
+    lines.append("Ranked by size x age, #1 is the most worth removing:")
+    for rank, stale in enumerate(report.stale_files[:limit], 1):
         lines.append(
-            f"- {human_bytes(stale.entry.size)}, {stale.age_days:.0f} days old: "
-            f"{stale.entry.path}"
+            f"#{rank}. {stale.entry.name} — {human_bytes(stale.entry.size)}, "
+            f"unused for {stale.age_days:.0f} days (at {stale.entry.path})"
         )
 
     lines.append("")
