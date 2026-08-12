@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Environment
+.env
+
+# Project data (built at runtime)
+data/vector_store/
+data/uploads/
+*.faiss
+
+# Models / voices (downloaded, not committed)
+models/
+voices/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
