@@ -1,19 +1,16 @@
-# ── Phase 1–2: core + web backend ─────────────────────────────
+# ── Core ──────────────────────────────────────────────────────
 httpx>=0.27            # HTTP client for talking to Ollama (sync + async, streaming)
 pydantic>=2.7          # typed models
 pydantic-settings>=2.3 # .env-based config
 python-dotenv>=1.0     # load .env
-fastapi>=0.111         # web backend (Phase 2)
-uvicorn[standard]>=0.30  # ASGI server (Phase 2)
-python-multipart>=0.0.9  # file uploads (Phase 3)
 
-# ── Phase 3: RAG ──────────────────────────────────────────────
+# ── RAG ───────────────────────────────────────────────────────
 fastembed>=0.8         # all-MiniLM-L6-v2 embeddings on ONNX (no PyTorch)
 faiss-cpu>=1.9         # vector store
 pypdf>=4.2             # PDF text extraction
 python-docx>=1.1       # .docx text extraction (local-file ingest)
 
-# ── Phase 4: Voice ────────────────────────────────────────────
+# ── Voice ─────────────────────────────────────────────────────
 faster-whisper>=1.2    # offline speech-to-text (Whisper on CTranslate2)
 piper-tts>=1.6         # offline neural text-to-speech
 
