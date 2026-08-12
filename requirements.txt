@@ -13,6 +13,8 @@ python-docx>=1.1       # .docx text extraction (local-file ingest)
 # ── Voice ─────────────────────────────────────────────────────
 faster-whisper>=1.2    # offline speech-to-text (Whisper on CTranslate2)
 piper-tts>=1.6         # offline neural text-to-speech
+sounddevice>=0.4       # mic capture + playback (PortAudio); the browser did this before
+soundfile>=0.12        # decode Piper's WAV for playback
 
 # ── CLI front end ─────────────────────────────────────────────
 typer>=0.12            # command surface

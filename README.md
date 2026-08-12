@@ -74,11 +74,13 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 | `ingest <path>` | Index a document for retrieval |
 | `docs` | List indexed documents (`--reset` to wipe) |
 | `find <query>` | Search your allowed folders |
+| `say <text>` | Speak text aloud (`--out file.wav` to save instead) |
+| `listen` | Record from the mic and transcribe (`--ask` to answer it) |
 | `models` | List locally available models |
-| `doctor` | Diagnose backend, folders, index, and voice |
+| `doctor` | Diagnose backend, folders, index, audio, and voice |
 
-Inside `chat`: `/rag`, `/files`, `/model`, `/temp`, `/ingest`, `/find`, `/docs`,
-`/reset`, `/clear`, `/help`, `/exit`.
+Inside `chat`: `/rag`, `/files`, `/speak`, `/mic`, `/model`, `/temp`, `/ingest`,
+`/find`, `/docs`, `/reset`, `/clear`, `/help`, `/exit`.
 
 ## Chat with your documents (RAG)
 
@@ -104,6 +106,34 @@ question with and without `--rag` to see the difference.
   and keeps each heading attached to its body. This matters: naive fixed-width
   chunking sliced "HIPAA" in half and detached the "Compliance" heading, dropping
   that chunk from rank 1 to rank 6 and causing the model to miss the answer.
+
+## Talk to it (voice)
+
+Fully offline speech, both directions:
+
+```bash
+python assistant.py chat --speak      # replies are read aloud
+python assistant.py listen --ask      # speak a question, get an answer
+python assistant.py say "hello there"
+```
+
+In a session, `/mic` records until you press Enter, then transcribes with
+**faster-whisper** and sends it. `/speak on` reads replies aloud with **Piper**.
+For a long answer the assistant first condenses it to a short spoken summary —
+the full text still prints, so you don't sit through a minute of narration.
+
+### Design notes
+
+- Both voice models **load lazily** — Piper on the first spoken reply, Whisper
+  only if you use the mic — so they don't occupy RAM until needed. On an 8GB
+  machine that headroom is the whole budget.
+- Whisper uses **int8** quantization (smallest CPU memory), pinned to
+  `models/whisper/`; the Piper voice lives in `models/piper/`.
+- Capture is **16 kHz mono**, Whisper's native rate, avoiding a resample.
+- Audio hardware is the least predictable part of a desktop app, so
+  `app/cli/audio.py` degrades rather than raising: voice commands check
+  `available()` first, and playback falls back to the Windows stdlib player if
+  PortAudio is missing. A dead speaker never ends a conversation.
 
 ## Reading files from your computer (allowlisted)
 

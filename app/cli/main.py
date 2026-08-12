@@ -35,13 +35,14 @@ def chat(
         True, "--files/--no-files", help="Let the model open local files by name."
     ),
     model: str = typer.Option(None, "--model", "-m", help="Model for this session."),
+    speak: bool = typer.Option(False, "--speak", help="Read replies aloud."),
 ) -> None:
     """Start an interactive chat session."""
     from app.cli.repl import Session, run
 
     run(
         _assistant(),
-        Session(use_rag=rag, allow_files=files, model=model),
+        Session(use_rag=rag, allow_files=files, model=model, speak=speak),
     )
 
 
@@ -163,6 +164,62 @@ def find(
 
 
 @cli.command()
+def say(
+    text: list[str] = typer.Argument(None, help="Text to speak. Reads stdin if omitted."),
+    out: str = typer.Option(None, "--out", "-o", help="Write a .wav file instead of playing."),
+) -> None:
+    """Speak text aloud with Piper (offline TTS)."""
+    from app.cli import audio
+
+    words = " ".join(text).strip() if text else ""
+    if not words and not sys.stdin.isatty():
+        from app.cli.repl import clean_input
+
+        words = clean_input(sys.stdin.read())
+    if not words:
+        err_console.print("[err]Nothing to say.[/err]")
+        raise typer.Exit(1)
+
+    wav, summarized = _assistant().speak(words)
+    if summarized:
+        console.print("[meta](condensed to a spoken summary)[/meta]")
+
+    if out:
+        from pathlib import Path
+
+        Path(out).write_bytes(wav)
+        console.print(f"[ok]wrote {out}[/ok]")
+        return
+
+    if not audio.available():
+        err_console.print(
+            "[err]No audio output.[/err] [hint]use --out to write a .wav instead[/hint]"
+        )
+        raise typer.Exit(1)
+    audio.play_wav(wav)
+
+
+@cli.command()
+def listen(
+    ask_it: bool = typer.Option(False, "--ask", help="Send the transcript to the model."),
+) -> None:
+    """Record from the microphone and transcribe it (offline Whisper)."""
+    from app.cli.repl import Session, record_question, run_turn
+
+    assistant = _assistant()
+    text = record_question(assistant)
+    if not text:
+        raise typer.Exit(1)
+
+    if not ask_it:
+        print(text)
+        return
+
+    console.print(f"[user]you (voice)[/user] {text}")
+    run_turn(assistant, Session(), text)
+
+
+@cli.command()
 def models() -> None:
     """List models available from the local inference backend."""
     health = _assistant().health()
@@ -219,13 +276,25 @@ def doctor() -> None:
         ok = False
         console.print(f"[err]✗[/err] document index unavailable: {exc}")
 
-    voice_path = settings.piper_voice_path
     from pathlib import Path
 
-    if Path(voice_path).exists():
-        console.print(f"[ok]✓[/ok] TTS voice present ({Path(voice_path).name})")
+    from app.cli import audio
+
+    voice_path = Path(settings.piper_voice_path)
+    if voice_path.exists():
+        console.print(f"[ok]✓[/ok] TTS voice present ({voice_path.name})")
     else:
-        console.print(f"[warn]![/warn] TTS voice missing at {voice_path} [meta](voice replies disabled)[/meta]")
+        console.print(
+            f"[warn]![/warn] TTS voice missing at {voice_path} "
+            "[meta](spoken replies unavailable)[/meta]"
+        )
+
+    if audio.available():
+        console.print(f"[ok]✓[/ok] audio devices ready (in: {audio.input_device_name()})")
+    else:
+        console.print(
+            "[warn]![/warn] no audio device [meta](/mic and /speak unavailable)[/meta]"
+        )
 
     console.print()
     console.print("[ok]All good.[/ok]" if ok else "[err]Some checks failed.[/err]")

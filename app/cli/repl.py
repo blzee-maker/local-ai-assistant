@@ -14,7 +14,7 @@ from pathlib import Path
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 
-from app.cli import render
+from app.cli import audio, render
 from app.cli.render import console
 from app.core import Assistant
 from app.engines import ChatMessage
@@ -30,6 +30,8 @@ HELP = """[bot]Commands[/bot]
   [user]/files[/user] [meta]on|off[/meta]    allow the model to open local files by name
   [user]/model[/user] [meta]<name>[/meta]    switch model for this session (blank = show current)
   [user]/temp[/user] [meta]<0.0-2.0>[/meta]  sampling temperature
+  [user]/speak[/user] [meta]on|off[/meta]    read replies aloud (Piper, offline)
+  [user]/mic[/user]              record a question from the microphone
   [user]/ingest[/user] [meta]<path>[/meta]   index a local file for RAG
   [user]/find[/user] [meta]<query>[/meta]    search your allowed folders
   [user]/docs[/user]             list indexed documents
@@ -45,6 +47,7 @@ class Session:
     history: list[ChatMessage] = field(default_factory=list)
     use_rag: bool = False
     allow_files: bool = True
+    speak: bool = False
     model: str | None = None
     temperature: float | None = None
 
@@ -53,6 +56,8 @@ class Session:
             f"rag {'on' if self.use_rag else 'off'}",
             f"files {'on' if self.allow_files else 'off'}",
         ]
+        if self.speak:
+            bits.append("speak on")
         if self.model:
             bits.append(self.model)
         return "  ·  ".join(bits)
@@ -106,6 +111,22 @@ def handle_command(assistant: Assistant, session: Session, line: str) -> bool:
             console.print(f"[ok]temperature {session.temperature}[/ok]")
         except ValueError:
             console.print("[err]usage: /temp 0.7[/err]")
+
+    elif cmd == "speak":
+        if not audio.available():
+            console.print(
+                "[err]No audio output available.[/err] "
+                "[hint]pip install sounddevice soundfile[/hint]"
+            )
+        else:
+            session.speak = _parse_toggle(arg, session.speak)
+            console.print(f"[ok]speak {'on' if session.speak else 'off'}[/ok]")
+
+    elif cmd == "mic":
+        text = record_question(assistant)
+        if text:
+            console.print(f"[user]you (voice)[/user] {text}")
+            run_turn(assistant, session, text)
 
     elif cmd == "ingest":
         if not arg:
@@ -194,6 +215,58 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
         render.print_opened_file(terminal.opened_file)
         render.print_sources(terminal.sources)
         render.print_metrics(terminal.metrics)
+
+    if session.speak:
+        speak_reply(assistant, reply)
+
+
+def speak_reply(assistant: Assistant, reply: str) -> None:
+    """Synthesize and play a reply. Never fatal — a dead speaker shouldn't end
+    the conversation, so failures degrade to a warning and the text stands."""
+    try:
+        wav, summarized = assistant.speak(reply)
+    except Exception as exc:
+        console.print(f"[warn]could not speak that ({exc})[/warn]")
+        return
+    if summarized:
+        console.print("[meta](speaking a condensed summary)[/meta]")
+    audio.play_wav(wav)
+
+
+def record_question(assistant: Assistant) -> str | None:
+    """Record from the mic and transcribe it. Returns None if nothing usable."""
+    if not audio.available():
+        console.print(
+            "[err]No microphone available.[/err] "
+            "[hint]pip install sounddevice soundfile[/hint]"
+        )
+        return None
+
+    device = audio.input_device_name()
+    console.print(
+        f"[bot]recording[/bot] [meta]{device or 'default input'} — "
+        "press Enter to stop[/meta]"
+    )
+    try:
+        wav_path = audio.record_to_tempfile(input)
+    except audio.RecordingError as exc:
+        console.print(f"[err]{exc}[/err]")
+        return None
+
+    try:
+        console.print("[meta]transcribing…[/meta]")
+        text = assistant.transcribe(str(wav_path))
+    except Exception as exc:
+        console.print(f"[err]transcription failed: {exc}[/err]")
+        return None
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+    text = (text or "").strip()
+    if not text:
+        console.print("[warn]didn't catch anything[/warn]")
+        return None
+    return text
 
 
 # PowerShell prepends a UTF-8 BOM when piping text into a program, so the first
