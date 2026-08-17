@@ -79,8 +79,16 @@ def metrics_line(metrics: dict[str, Any]) -> str:
 
 
 def print_metrics(metrics: dict[str, Any] | None) -> None:
-    if metrics:
-        console.print(f"[meta]{metrics_line(metrics)}[/meta]")
+    if not metrics:
+        return
+    # Say it plainly when a weaker model answered — otherwise a degraded reply
+    # reads as the main model's best effort.
+    if metrics.get("fell_back"):
+        console.print(
+            f"[warn]The main model could not be loaded; answered with "
+            f"{metrics.get('model')} instead.[/warn]"
+        )
+    console.print(f"[meta]{metrics_line(metrics)}[/meta]")
 
 
 def print_sources(sources: list[dict[str, Any]]) -> None:

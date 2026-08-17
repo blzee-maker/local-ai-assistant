@@ -1,3 +1,4 @@
+
 """The Assistant orchestrator — everything the app *does*, with no UI attached.
 
 This layer owns the behaviour that used to live inside FastAPI route handlers:
@@ -334,6 +335,7 @@ class Assistant:
                         opened_file=opened_file,
                         metrics={
                             "model": event.model,
+                            "fell_back": event.fell_back,
                             "prompt_tokens": event.prompt_tokens,
                             "completion_tokens": event.completion_tokens,
                             "time_to_first_token_s": event.time_to_first_token_s,

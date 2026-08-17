@@ -36,6 +36,11 @@ class StreamEvent:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 
+    # True when the primary model could not be loaded and a smaller fallback
+    # answered instead. Surfaced to the user: silently swapping in a weaker
+    # model would make a worse answer look like the model's best effort.
+    fell_back: bool = False
+
     # Client-side: wall-clock latency the user actually feels (includes any
     # cold model load on the first call).
     time_to_first_token_s: float | None = None

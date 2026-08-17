@@ -20,6 +20,7 @@ from .base import (
     StreamEvent,
     ToolCall,
 )
+from .policy import check_model, partition_models
 
 
 class OllamaEngine(LLMEngine):
@@ -30,12 +31,46 @@ class OllamaEngine(LLMEngine):
         temperature: float = 0.7,
         timeout_s: float = 120.0,
         num_ctx: int | None = None,
+        fallback_model: str | None = None,
+        allow_remote_models: bool = False,
     ) -> None:
         self._host = host.rstrip("/")
         self._default_model = default_model
         self._temperature = temperature
         self._timeout_s = timeout_s
         self._num_ctx = num_ctx
+        self._fallback_model = fallback_model or None
+        self._allow_remote = allow_remote_models
+
+        check_model(default_model, allow_remote=allow_remote_models)
+        if self._fallback_model:
+            check_model(self._fallback_model, allow_remote=allow_remote_models)
+
+    def _resolve_model(self, options: GenerationOptions | None) -> str:
+        """Pick the model for a request and enforce the offline guarantee.
+
+        Every path that names a model goes through here — including per-request
+        overrides from `/model` and `--model`, which is exactly where a cloud
+        model would otherwise slip in.
+        """
+        name = (options.model if options else None) or self._default_model
+        check_model(name, allow_remote=self._allow_remote)
+        return name
+
+    def _should_try_fallback(self, model: str, exc: Exception) -> bool:
+        """Only retry when a smaller model could plausibly help.
+
+        A 5xx from Ollama is what an out-of-memory model load looks like, and on
+        a memory-tight machine that is the common failure. A refused connection
+        means the server is down, where retrying with different weights is
+        pointless noise.
+        """
+        if not self._fallback_model or model == self._fallback_model:
+            return False
+        return (
+            isinstance(exc, httpx.HTTPStatusError)
+            and exc.response.status_code >= 500
+        )
 
     # ── readiness ────────────────────────────────────────────────
     def health_check(self) -> bool:
@@ -46,9 +81,29 @@ class OllamaEngine(LLMEngine):
             return False
 
     def list_models(self) -> list[str]:
+        """Locally runnable models. Cloud entries are filtered out unless
+        explicitly allowed, so nothing offers the user a model this engine
+        would then refuse to run."""
         resp = httpx.get(f"{self._host}/api/tags", timeout=5.0)
         resp.raise_for_status()
-        return [m["name"] for m in resp.json().get("models", [])]
+        names = [m["name"] for m in resp.json().get("models", [])]
+        if self._allow_remote:
+            return names
+        local, _remote = partition_models(names)
+        return local
+
+    def list_remote_models(self) -> list[str]:
+        """Cloud-hosted models present in the registry — surfaced by `doctor`
+        so the user knows they exist and that they are being refused."""
+        try:
+            resp = httpx.get(f"{self._host}/api/tags", timeout=5.0)
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return []
+        _local, remote = partition_models(
+            [m["name"] for m in resp.json().get("models", [])]
+        )
+        return remote
 
     # ── tool-calling (non-streaming) ─────────────────────────────
     def chat(
@@ -59,7 +114,7 @@ class OllamaEngine(LLMEngine):
     ) -> AssistantTurn:
         opts = options or GenerationOptions()
         payload: dict = {
-            "model": opts.model or self._default_model,
+            "model": self._resolve_model(opts),
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": False,
             "options": {
@@ -99,9 +154,48 @@ class OllamaEngine(LLMEngine):
         messages: list[ChatMessage],
         options: GenerationOptions | None = None,
     ) -> Iterator[StreamEvent]:
-        opts = options or GenerationOptions()
-        model = opts.model or self._default_model
+        """Stream a reply, dropping to the fallback model if the primary can't load.
 
+        The retry only happens before any token has been emitted. Once text has
+        reached the user, restarting with a different model would splice two
+        different answers together, so a mid-stream failure is surfaced as-is.
+        """
+        opts = options or GenerationOptions()
+        model = self._resolve_model(opts)
+
+        try:
+            first_attempt = self._stream_once(messages, opts, model)
+            first_event = next(first_attempt)
+        except StopIteration:
+            return
+        except Exception as exc:
+            if not self._should_try_fallback(model, exc):
+                raise
+            fallback = self._fallback_model
+            assert fallback is not None
+            try:
+                retry = self._stream_once(messages, opts, fallback, fell_back=True)
+                first_event = next(retry)
+            except StopIteration:
+                return
+            except Exception:
+                # The fallback failed too (commonly: never pulled). The original
+                # error describes the real problem, so report that one.
+                raise exc
+            yield first_event
+            yield from retry
+            return
+
+        yield first_event
+        yield from first_attempt
+
+    def _stream_once(
+        self,
+        messages: list[ChatMessage],
+        opts: GenerationOptions,
+        model: str,
+        fell_back: bool = False,
+    ) -> Iterator[StreamEvent]:
         payload: dict = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
@@ -152,6 +246,7 @@ class OllamaEngine(LLMEngine):
                     yield StreamEvent(
                         done=True,
                         model=model,
+                        fell_back=fell_back,
                         prompt_tokens=chunk.get("prompt_eval_count"),
                         completion_tokens=chunk.get("eval_count"),
                         time_to_first_token_s=first_token_at,

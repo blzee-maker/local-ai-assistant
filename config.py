@@ -37,7 +37,15 @@ class Settings(BaseSettings):
     # Ollama connection + models.
     ollama_host: str = "http://localhost:11434"
     default_model: str = "llama3.2:latest"
+    # Used automatically when the default model fails to load (typically out of
+    # memory on a small machine). Set to "" to disable the safety net.
     fallback_model: str = "llama3.2:1b"
+
+    # Ollama can route inference to hosted "-cloud" models. Allowing that would
+    # send prompts and file contents off the machine, which is the one thing
+    # this project promises not to do — so it is refused unless deliberately
+    # enabled here. See app/engines/policy.py.
+    allow_remote_models: bool = False
 
     # Generation defaults.
     temperature: float = 0.7

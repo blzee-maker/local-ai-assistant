@@ -22,6 +22,8 @@ def build_engine() -> LLMEngine:
             temperature=settings.temperature,
             timeout_s=settings.request_timeout_s,
             num_ctx=settings.num_ctx,
+            fallback_model=settings.fallback_model,
+            allow_remote_models=settings.allow_remote_models,
         )
 
     # Future: elif name == "llamacpp": return LlamaCppEngine(...)

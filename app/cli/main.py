@@ -300,6 +300,65 @@ def scan(
         )
 
 
+@cli.command(name="eval")
+def eval_cmd(
+    retrieval_only: bool = typer.Option(
+        False, "--retrieval-only", help="Skip the LLM. Fast, deterministic, CI-friendly."
+    ),
+    no_judge: bool = typer.Option(
+        False, "--no-judge", help="Skip LLM-as-judge groundedness scoring (roughly 2x faster)."
+    ),
+    top_k: int = typer.Option(None, "--top-k", help="Override rag_top_k for this run."),
+    model: str = typer.Option(None, "--model", "-m", help="Model under test."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the report as JSON."),
+    threshold: float = typer.Option(
+        None, "--threshold", help="Exit non-zero if any headline metric falls below this (0-1)."
+    ),
+) -> None:
+    """Benchmark the RAG pipeline against the golden dataset in evals/."""
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+
+    from evals import EvalRunner
+    from evals import report as eval_report
+
+    try:
+        with EvalRunner(top_k=top_k, model=model) as runner:
+            if retrieval_only or as_json:
+                result = runner.run(retrieval_only=retrieval_only, judge=not no_judge)
+            else:
+                total = len(runner.dataset["cases"])
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[meta]{task.description}[/meta]"),
+                    console=console,
+                    transient=True,
+                ) as progress:
+                    task = progress.add_task("Starting", total=total)
+                    done = 0
+
+                    def on_case(case_id: str) -> None:
+                        nonlocal done
+                        done += 1
+                        progress.update(
+                            task, description=f"{case_id} ({done}/{total})", completed=done
+                        )
+
+                    result = runner.run(judge=not no_judge, on_case=on_case)
+    except FileNotFoundError as exc:
+        console.print(f"[err]✗[/err] {exc}")
+        raise typer.Exit(1)
+
+    if as_json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        eval_report.print_report(result)
+
+    if threshold is not None and not eval_report.passed(result, threshold):
+        if not as_json:
+            console.print(f"[err]below threshold {threshold:.0%}[/err]")
+        raise typer.Exit(1)
+
+
 @cli.command()
 def models() -> None:
     """List models available from the local inference backend."""
@@ -373,6 +432,34 @@ def doctor() -> None:
                 f"[err]✗[/err] model {health['model']} not pulled "
                 f"[hint]ollama pull {health['model']}[/hint]"
             )
+
+        # The fallback is only a safety net if it is actually on disk.
+        fallback = settings.fallback_model
+        if not fallback:
+            console.print("[meta]·[/meta] no fallback model configured")
+        elif fallback in health["models"]:
+            console.print(f"[ok]✓[/ok] fallback model {fallback} is pulled")
+        else:
+            console.print(
+                f"[warn]![/warn] fallback model {fallback} is not pulled "
+                f"[hint]ollama pull {fallback}[/hint] "
+                "[meta](no safety net if the main model runs out of memory)[/meta]"
+            )
+
+        # Name any cloud models present, and confirm they are being refused.
+        remote = getattr(assistant.engine, "list_remote_models", lambda: [])()
+        if remote:
+            state = (
+                "[err]ALLOWED — prompts can leave this machine[/err]"
+                if settings.allow_remote_models
+                else "[ok]blocked[/ok]"
+            )
+            console.print(
+                f"[meta]·[/meta] {len(remote)} cloud model(s) in the registry, {state}: "
+                f"[meta]{', '.join(remote)}[/meta]"
+            )
+            if settings.allow_remote_models:
+                ok = False
     else:
         ok = False
         console.print(

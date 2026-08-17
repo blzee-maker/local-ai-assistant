@@ -35,6 +35,57 @@ Two seams carry the design:
 - **At setup: one-time downloads.** Models are pulled from the internet *once*
   (`ollama pull ...`, `pip install ...`). After that, unplug the network and it works.
 
+### The guarantee is enforced, not just documented
+
+Ollama can also route inference to **hosted models** — anything tagged `-cloud`,
+such as `gpt-oss:120b-cloud`. They appear in `ollama list` looking exactly like
+local models and are selected the same way, so a single `/model gpt-oss:120b-cloud`
+would have shipped prompts, retrieved chunks, and injected file contents to a
+remote server while the UI still claimed to be running offline.
+
+Nothing in the app chose a cloud model, but nothing stopped one either — and a
+privacy guarantee that relies on the user not typing the wrong thing is not a
+guarantee. So `app/engines/policy.py` validates every point where a model name is
+resolved, including the `--model` flag and the `/model` command:
+
+```
+$ python assistant.py ask "hello" --model gpt-oss:120b-cloud
+'gpt-oss:120b-cloud' is a cloud-hosted model — using it would send your prompts
+and file contents off this machine, which this assistant exists to prevent.
+```
+
+Cloud models are also hidden from `models` (nothing should offer a choice it
+would then refuse) and reported by `doctor`. To opt in deliberately, set
+`ASSISTANT_ALLOW_REMOTE_MODELS=true` — at which point `doctor` reports it as a
+failed check, because at that point the headline claim of this README is false.
+
+## The models
+
+One LLM does all the generation; the rest are task-specific networks.
+
+| Model | Size | Role |
+|---|---|---|
+| `llama3.2:latest` (Llama 3.2 3B) | 2.0 GB | Chat, RAG answers, tool-calling, summarization |
+| `llama3.2:1b` | 1.3 GB | Fallback if the main model can't load |
+| `all-MiniLM-L6-v2` (ONNX) | 86 MB | RAG embeddings, 384-dim |
+| `faster-whisper base.en` (int8) | 139 MB | Speech → text |
+| `Piper en_US-lessac-medium` | 60 MB | Text → speech |
+
+**The fallback is a real safety net, not a config entry.** On a memory-tight
+machine a model load fails with an HTTP 5xx, which is exactly what happened
+during development on an 8GB box with ~250 MB free. When that occurs the engine
+retries once with `fallback_model` and **says so** — silently substituting a
+weaker model would make a degraded answer look like the main model's best effort:
+
+```
+The main model could not be loaded; answered with llama3.2:1b instead.
+```
+
+The retry only fires before the first token; restarting mid-stream would splice
+two different answers together. It also only fires on 5xx — a refused connection
+means Ollama is down, where different weights would not help. Run
+`ollama pull llama3.2:1b` to arm it; `doctor` warns when it isn't pulled.
+
 ## Prerequisites
 
 - **Python 3.10+** (tested on 3.13)
@@ -80,6 +131,7 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 | `listen` | Record from the mic and transcribe (`--ask` to answer it) |
 | `models` | List locally available models |
 | `doctor` | Diagnose backend, folders, index, audio, and voice |
+| `eval` | Benchmark the RAG pipeline against a golden dataset |
 
 Inside `chat`: `/rag`, `/files`, `/speak`, `/mic`, `/model`, `/temp`, `/ingest`,
 `/find`, `/docs`, `/reset`, `/clear`, `/help`, `/exit`.
@@ -270,10 +322,34 @@ file request. Holding it constant keeps the model warm.
 python -m pytest tests/ -q
 ```
 
-42 tests, all using synthesized fixtures so the suite never reads personal
+91 tests, all using synthesized fixtures so the suite never reads personal
 files. They cover both directions of the integrity verifier (healthy files must
 not be flagged; damaged files must be), the staged duplicate detector, the
-consent scope rules, and the read-only guarantee.
+consent scope rules, the read-only guarantee, the offline model guard and memory
+fallback, and the eval harness's own scoring functions.
+
+## Evals
+
+Unit tests prove the plumbing works. They cannot tell you whether the assistant
+*answers well* — so `evals/` benchmarks the RAG pipeline against a golden
+dataset of questions about a deliberately **fictional** product handbook.
+
+```bash
+python assistant.py eval --retrieval-only   # ~0.2s, no LLM, deterministic
+python assistant.py eval                    # end-to-end + groundedness judge
+python assistant.py eval --threshold 0.8    # exit 1 on regression (CI gate)
+```
+
+The document is invented so that a correct answer cannot come from the model's
+own weights — it can only come from retrieval. Retrieval and generation are
+scored as separate stages, because "the answer wasn't in the prompt" and "the
+answer was in the prompt and the model blew it" need opposite fixes; the report
+cross-tabulates them and names which one to go fix. Questions whose answers are
+absent from the document are graded backwards — refusing is correct — which is
+what tests the anti-hallucination clamp in the RAG prompt.
+
+See [`evals/README.md`](evals/README.md) for the metric definitions and the
+suite's known limits.
 
 ## Configuration
 

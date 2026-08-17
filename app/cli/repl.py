@@ -102,8 +102,17 @@ def handle_command(assistant: Assistant, session: Session, line: str) -> bool:
         if not arg:
             console.print(f"[meta]model: {session.model or settings.default_model}[/meta]")
         else:
-            session.model = arg
-            console.print(f"[ok]model set to {arg}[/ok]")
+            # Validate now rather than letting the next turn fail — this is the
+            # exact path a cloud model would otherwise enter through.
+            from app.engines.policy import RemoteModelBlocked, check_model
+
+            try:
+                check_model(arg, allow_remote=settings.allow_remote_models)
+            except RemoteModelBlocked as exc:
+                console.print(f"[err]{exc}[/err]")
+            else:
+                session.model = arg
+                console.print(f"[ok]model set to {arg}[/ok]")
 
     elif cmd == "temp":
         try:
