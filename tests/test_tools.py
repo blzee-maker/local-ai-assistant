@@ -139,6 +139,29 @@ def test_backstop_declines_rather_than_guessing_between_tools(ledger):
     assert registry.select("find something", FakeEngine(None)) is None
 
 
+def test_excluded_tools_are_not_offered(ledger):
+    registry = ToolRegistry(ledger)
+    registry.register_all([FakeTool("files", "find"), FakeTool("disk", "find")])
+    engine = FakeEngine("disk")
+
+    registry.select("find something", engine, exclude={"files"})
+    assert engine.tools_offered == ["disk"]
+
+
+def test_disabling_file_access_does_not_mute_other_capabilities():
+    """Regression: `--no-files` once gated the whole registry, so "why is my
+    laptop slow?" fell back to generic advice instead of reading the machine.
+    That flag is about file access, not about silencing everything."""
+    from app.core.assistant import FILE_ACCESS_TOOLS
+    from app.tools import default_tools
+
+    names = {tool.name for tool in default_tools()}
+    assert FILE_ACCESS_TOOLS == {"open_local_file"}
+    # Everything else must survive the flag.
+    assert names - FILE_ACCESS_TOOLS, "no capabilities left after excluding file tools"
+    assert "system_status" not in FILE_ACCESS_TOOLS
+
+
 def test_backstop_never_fires_for_a_destructive_tool(ledger):
     """Rule 6: a keyword match is enough to guess 'read a file'. It is not
     enough to decide something gets destroyed."""
@@ -211,9 +234,22 @@ def test_destructive_tool_confirms_every_single_time(ledger):
     registry.invoke(ToolInvocation("wipe", {}, "model"), ctx(confirm=confirm))
     registry.invoke(ToolInvocation("wipe", {}, "model"), ctx(confirm=confirm))
 
-    # Once for the standing grant, then once per invocation.
-    assert len(asked) == 3
+    # Exactly one prompt per call, and no standing grant in between.
+    assert len(asked) == 2
     assert len(tool.calls) == 2
+
+
+def test_destructive_tools_have_no_standing_grant(ledger):
+    """A persistent "yes, you may destroy things" is the one permission that
+    should not be storable. Every call is confirmed on its own merits."""
+    registry = ToolRegistry(ledger)
+    registry.register(FakeTool("wipe", "delete", risk=Risk.DESTRUCTIVE))
+
+    registry.invoke(ToolInvocation("wipe", {}, "model"), ctx(confirm=lambda _p: True))
+
+    assert ledger.decision("wipe") is None
+    assert not Risk.DESTRUCTIVE.needs_consent
+    assert Risk.DESTRUCTIVE.needs_confirmation
 
 
 def test_no_confirmer_means_no(ledger):

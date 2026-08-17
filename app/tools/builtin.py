@@ -241,4 +241,11 @@ class RememberTool(Tool):
 
 def default_tools() -> list[Tool]:
     """The tools registered for a normal session."""
-    return [OpenLocalFileTool(), DiskReportTool(), RememberTool()]
+    from app.tools.system import system_tools
+
+    return [
+        OpenLocalFileTool(),
+        DiskReportTool(),
+        RememberTool(),
+        *system_tools(),
+    ]

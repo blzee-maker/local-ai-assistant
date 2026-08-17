@@ -71,9 +71,20 @@ Samsung SEFT trailers, hashing clobbering its own staleness signal, PowerShell's
 BOM on piped stdin, PowerShell's ANSI default for `.ps1`. Reading the code found
 none of them. Run it against real data before claiming it works.
 
-**12. Test both directions.**
+**12. Test both directions, through the real path.**
 Healthy inputs must pass *and* damaged inputs must fail. A verifier tested only
-on bad input is half-tested — that is how 21 false positives survive.
+on bad input is half-tested — that is how 21 false positives survive. And test
+safety guards through the **actual dispatch path**: a test that called a tool
+directly proved a protected process was refused, while the real flow still
+prompted the user to approve killing it first. Testing the unit is not testing
+the guard.
+
+**13. When the answer is already known, state it — don't ask a model to phrase it.**
+Told to explain a refused action, llama3.2:3b repeatedly claimed "I am unable to
+terminate processes on your system" — false, and enough to convince someone the
+capability does not exist — despite explicit instructions not to. Refusals,
+cancellations and other fully-determined outcomes are emitted as fixed text with
+no generation at all (`ToolResult.final_text`).
 
 ---
 

@@ -40,13 +40,21 @@ class Risk(str, Enum):
 
     @property
     def needs_consent(self) -> bool:
-        """READ tools inherit the folder consent already granted for scanning;
-        anything that changes state asks separately."""
-        return self is not Risk.READ
+        """A standing, remembered grant. WRITE only.
+
+        READ inherits the folder consent already granted for scanning.
+        DESTRUCTIVE deliberately has *no* standing grant: a persistent
+        "yes, you may destroy things" is precisely the permission that should
+        not exist, and asking for one produced a worse experience too — the
+        standing prompt can only say "Allow 'end_process'?", so a user was being
+        asked to approve a category before ever learning which program was
+        about to be closed. Per-invocation confirmation replaces it entirely.
+        """
+        return self is Risk.WRITE
 
     @property
     def needs_confirmation(self) -> bool:
-        """Per-invocation confirmation, not just a one-time grant."""
+        """Per-invocation confirmation, naming the specific target."""
         return self is Risk.DESTRUCTIVE
 
 
@@ -66,11 +74,24 @@ class ToolResult:
     # A note injected as a system message when a tool could not do its job, so
     # the model says "I couldn't find that" instead of "I have no file access".
     correction: str | None = None
+    # A reply that is already fully determined, used verbatim with no generation.
+    #
+    # For an outcome like "you declined, so nothing happened" there is nothing
+    # for a model to compose, and llama3.2:3b repeatedly ignored the instruction
+    # not to invent a reason — answering a refused process kill with "I am
+    # unable to terminate processes on your system", which is false and would
+    # convince someone the capability does not exist. Where the truth is known
+    # exactly, state it exactly.
+    final_text: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def failure(cls, correction: str, display: str = "") -> "ToolResult":
-        return cls(ok=False, correction=correction, display=display)
+    def failure(
+        cls, correction: str, display: str = "", final_text: str | None = None
+    ) -> "ToolResult":
+        return cls(
+            ok=False, correction=correction, display=display, final_text=final_text
+        )
 
 
 @runtime_checkable

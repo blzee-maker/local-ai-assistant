@@ -129,6 +129,7 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 | `consent` | Show or change permission to analyse your files |
 | `tools` | List capabilities, permissions, and what they've done |
 | `memory` | Show or change what the assistant remembers about you |
+| `system` | CPU, memory, disk, battery, and top processes |
 | `say <text>` | Speak text aloud (`--out file.wav` to save instead) |
 | `listen` | Record from the mic and transcribe (`--ask` to answer it) |
 | `models` | List locally available models |
@@ -162,6 +163,74 @@ question with and without `--rag` to see the difference.
   and keeps each heading attached to its body. This matters: naive fixed-width
   chunking sliced "HIPAA" in half and detached the "Compliance" heading, dropping
   that chunk from rank 1 to rank 6 and causing the model to miss the answer.
+
+## System awareness
+
+```bash
+python assistant.py system                          # CPU, memory, disk, battery, processes
+python assistant.py ask "why is my laptop slow?"    # a real answer, from real numbers
+```
+
+```
+Based on the current state of your machine:
+You are experiencing slowness due to low available memory
+(0.53 GB free out of 7.78 GB).
+system: 13% CPU · 0.53 GB free of 7.78 GB
+```
+
+The snapshot flags pressure explicitly ("memory is nearly exhausted") because a
+3B model will not infer that 0.5 GB free is a problem — and that inference *is*
+the question being asked.
+
+**"System Idle Process" is excluded from process listings.** Windows charges
+unused CPU time to it, so on an idle machine it tops any CPU ranking at 70–90%.
+Reporting it as the biggest consumer states the exact opposite of the truth:
+that figure is how much CPU is *free*.
+
+### Ending a process — the first irreversible capability
+
+`end_process` is `destructive`, so it is confirmed on **every** call, naming the
+actual target rather than the tool call:
+
+```
+End Spotify.exe (PID 8420, 150 MB)? Unsaved work will be lost.
+Allow? [y/N]
+```
+
+There is deliberately **no standing grant** for destructive tools. A persistent
+"yes, you may destroy things" is precisely the permission that should not exist —
+and asking for one produced a worse experience anyway, since a standing prompt
+can only say "Allow 'end_process'?", forcing a decision about a category before
+the user learns which program is about to close.
+
+What it refuses, in the order each failure would hurt:
+
+- **Protected processes**, before ever prompting. Ending `csrss.exe` doesn't
+  close a program, it bluescreens Windows. Found by running it: an early version
+  prompted *"End csrss.exe? Unsaved work will be lost"*, accepted the yes, and
+  only then refused — a prompt for an action that was never possible, training
+  exactly the wrong habit.
+- **Ambiguous names.** "close chrome" with fourteen `chrome.exe` processes must
+  not become fourteen terminations. The matches are listed and you pick a PID.
+- **Recycled PIDs.** Between the model naming PID 8420 and you approving it, that
+  PID can belong to something else. Name and start time are re-verified at the
+  moment of the kill, not when the target was chosen.
+- **Itself and its model server**, which would end the conversation mid-sentence.
+
+### Refusals are answered directly, not generated
+
+When you decline, the reply is fixed text and no model call happens at all:
+
+```
+Cancelled — nothing was changed.
+answered directly (no model call)
+```
+
+This is not an optimisation. Asked to phrase a refused kill, llama3.2:3b
+repeatedly answered *"I am unable to terminate processes on your system"* —
+false, and enough to convince someone the capability doesn't exist — despite
+explicit instructions not to. Where the truth is known exactly, it is stated
+exactly rather than delegated to a small model.
 
 ## Memory
 
@@ -235,9 +304,9 @@ python assistant.py tools --revoke <name>
 
 | Risk | Consent | Example |
 |---|---|---|
-| `read` | inherits folder consent | open a document, report a scan |
+| `read` | inherits folder consent | open a document, report a scan, system status |
 | `write` | asked once, remembered | remember a fact |
-| `destructive` | **confirmed every single call** | (none yet) |
+| `destructive` | **confirmed every call, no standing grant** | end a process |
 
 ### Why a registry rather than more `if` branches
 
@@ -427,15 +496,20 @@ file request. Holding it constant keeps the model warm.
 python -m pytest tests/ -q
 ```
 
-133 tests, all using synthesized fixtures so the suite never reads personal
+168 tests, all using synthesized fixtures so the suite never reads personal
 files. They cover both directions of the integrity verifier (healthy files must
 not be flagged; damaged files must be), the staged duplicate detector, the
 consent scope rules, the read-only guarantee, the offline model guard and model
-fallback, tool routing and permissions, memory recall and forgetting, and the
-eval harness's own scoring functions.
+fallback, tool routing and permissions, memory recall and forgetting, the
+process-termination guards, and the eval harness's own scoring functions.
 
-Tool tests assert on *which* tool fired, not merely that one did — a gate
-collision doesn't raise, it just quietly answers from the wrong source.
+Two habits worth keeping:
+
+- Tool tests assert on *which* tool fired, not merely that one did — a gate
+  collision doesn't raise, it quietly answers from the wrong source.
+- Safety tests go through the **real dispatch path**. A test that called the
+  tool directly proved a protected process was refused, while the actual flow
+  still prompted the user first. Testing the unit is not testing the guard.
 
 ## Evals
 

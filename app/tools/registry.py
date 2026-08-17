@@ -84,13 +84,25 @@ class ToolRegistry:
         return self._ledger
 
     # ── selection ────────────────────────────────────────────────
-    def candidates(self, text: str) -> list[Tool]:
-        """Tools whose cheap matcher thinks they might apply."""
-        return [tool for tool in self._tools.values() if tool.matches(text)]
+    def candidates(self, text: str, exclude: set[str] | None = None) -> list[Tool]:
+        """Tools whose cheap matcher thinks they might apply.
 
-    def select(self, text: str, engine) -> ToolInvocation | None:
+        `exclude` turns individual capabilities off for a turn — a user who
+        disabled file access has disabled *that*, not the assistant's ability to
+        tell them why their machine is slow.
+        """
+        blocked = exclude or set()
+        return [
+            tool
+            for tool in self._tools.values()
+            if tool.name not in blocked and tool.matches(text)
+        ]
+
+    def select(
+        self, text: str, engine, exclude: set[str] | None = None
+    ) -> ToolInvocation | None:
         """Choose a tool for `text`, or None for ordinary conversation."""
-        candidates = self.candidates(text)
+        candidates = self.candidates(text, exclude)
         if not candidates:
             return None
 
@@ -143,10 +155,13 @@ class ToolRegistry:
                     "permission previously declined",
                 )
                 return ToolResult.failure(
-                    f"The user has declined permission for '{tool.name}'. Tell them "
-                    "it is disabled and that they can re-enable it with "
-                    f"`assistant tools --grant {tool.name}`.",
+                    f"'{tool.name}' was previously declined by the user.",
                     display=f"{tool.name} is not permitted",
+                    final_text=(
+                        f"'{tool.name}' is turned off — you declined it "
+                        f"previously. Re-enable it with `assistant tools --grant "
+                        f"{tool.name}`."
+                    ),
                 )
             if decision is None:
                 granted = context.ask_confirmation(
@@ -159,29 +174,63 @@ class ToolRegistry:
                         "denied", "permission refused at prompt",
                     )
                     return ToolResult.failure(
-                        f"The user just declined permission for '{tool.name}', so "
-                        "the action did not happen. Tell them plainly that it was "
-                        "not done because they declined permission, and that they "
-                        f"can allow it with `assistant tools --grant {tool.name}`. "
-                        "Do not give any other reason — in particular do not say "
-                        "you are unable to do it or blame being offline.",
+                        f"The user declined permission for '{tool.name}'.",
                         display=f"{tool.name} denied",
+                        final_text=(
+                            "Not done — you declined permission for "
+                            f"'{tool.name}'. You can allow it later with "
+                            f"`assistant tools --grant {tool.name}`."
+                        ),
                     )
+
+        # Pre-flight — refuse *before* asking, when the answer is already no.
+        #
+        # Found by running it: asked to end csrss.exe, the assistant prompted
+        # "End csrss.exe? Unsaved work will be lost", accepted the user's yes,
+        # and only then refused. That prompt is a lie — the action was never
+        # possible — and approving destructive prompts that get silently blocked
+        # is exactly the habit not to train.
+        precheck = getattr(tool, "precheck", None)
+        if callable(precheck):
+            try:
+                refusal = precheck(invocation.arguments, context)
+            except Exception:
+                refusal = None
+            if refusal is not None:
+                ledger.record(
+                    tool.name, risk, invocation.source, invocation.arguments,
+                    "refused", refusal.display or refusal.correction,
+                )
+                return refusal
 
         # Confirmation — per invocation, for destructive actions only.
         if tool.risk.needs_confirmation:
-            approved = context.ask_confirmation(
-                f"Run '{tool.name}' with {invocation.arguments}? This can lose data."
-            )
+            # Prefer the tool's own wording. "Run 'end_process' with {'pid':
+            # 8420}?" is not something a person can evaluate; "End Spotify.exe
+            # (PID 8420, 150 MB)?" is. Informed consent needs the former to
+            # read like the latter.
+            prompt = None
+            describe = getattr(tool, "confirmation_prompt", None)
+            if callable(describe):
+                try:
+                    prompt = describe(invocation.arguments)
+                except Exception:
+                    prompt = None
+            if not prompt:
+                prompt = (
+                    f"Run '{tool.name}' with {invocation.arguments}? "
+                    "This can lose data."
+                )
+            approved = context.ask_confirmation(prompt)
             if not approved:
                 ledger.record(
                     tool.name, risk, invocation.source, invocation.arguments,
                     "denied", "confirmation refused",
                 )
                 return ToolResult.failure(
-                    f"The user did not confirm '{tool.name}'. Tell them nothing was "
-                    "changed.",
+                    f"The user declined to confirm '{tool.name}'.",
                     display=f"{tool.name} cancelled",
+                    final_text="Cancelled — nothing was changed.",
                 )
 
         try:
@@ -206,9 +255,15 @@ class ToolRegistry:
         )
         return result
 
-    def dispatch(self, text: str, engine, context: ToolContext) -> Dispatch:
+    def dispatch(
+        self,
+        text: str,
+        engine,
+        context: ToolContext,
+        exclude: set[str] | None = None,
+    ) -> Dispatch:
         """Select and run in one step. Returns an empty Dispatch for plain chat."""
-        invocation = self.select(text, engine)
+        invocation = self.select(text, engine, exclude)
         if invocation is None:
             return Dispatch()
         return Dispatch(invocation=invocation, result=self.invoke(invocation, context))

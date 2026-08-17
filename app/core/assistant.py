@@ -46,6 +46,10 @@ RAG_PROMPT_TEMPLATE = (
 # document cannot blow past num_ctx and silently truncate the conversation.
 FILE_INJECTION_CHARS = 8000
 
+# Tools that read the user's files, switched off by `--no-files` / `/files off`.
+# Only these — that flag is about file access, not about muting every capability.
+FILE_ACCESS_TOOLS = {"open_local_file"}
+
 
 @dataclass
 class AssistantEvent:
@@ -249,17 +253,38 @@ class Assistant:
         # and overlapping gates were separated by ordering — invisible, untested,
         # and unable to survive a third capability.
         tool_used: dict[str, Any] | None = None
-        dispatch = Dispatch()
-        if allow_file_access:
-            dispatch = self.tools.dispatch(
-                last_user_text,
-                self._engine,
-                ToolContext(
-                    assistant=self,
-                    request_text=last_user_text,
-                    confirm=confirm,
-                ),
+        # `allow_file_access` disables file *reading*, not every capability.
+        # Gating the whole registry on it meant `--no-files` also silenced the
+        # system tools, so "why is my laptop slow?" fell back to generic advice.
+        excluded = set() if allow_file_access else FILE_ACCESS_TOOLS
+        dispatch = self.tools.dispatch(
+            last_user_text,
+            self._engine,
+            ToolContext(
+                assistant=self,
+                request_text=last_user_text,
+                confirm=confirm,
+            ),
+            exclude=excluded,
+        )
+
+        # Some outcomes are already fully determined — "you declined, nothing
+        # happened" has nothing for a model to compose, and letting a 3B model
+        # phrase it produced confident falsehoods ("I am unable to terminate
+        # processes on your system"). Answer exactly, and skip generation.
+        if dispatch.result is not None and dispatch.result.final_text:
+            yield AssistantEvent(type="token", text=dispatch.result.final_text)
+            yield AssistantEvent(
+                type="done",
+                tool_used={
+                    "tool": dispatch.invocation.tool if dispatch.invocation else "",
+                    "display": dispatch.result.display,
+                    "failed": True,
+                },
+                recalled=recalled,
+                metrics={"model": model or settings.default_model, "determined": True},
             )
+            return
 
         if dispatch.result is not None:
             last_user = next(

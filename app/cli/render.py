@@ -51,6 +51,9 @@ def fmt_duration(seconds: float | None) -> str:
 
 def metrics_line(metrics: dict[str, Any]) -> str:
     """One-line latency strip: what the user felt, plus decode throughput."""
+    if metrics.get("determined"):
+        # No generation happened — a latency strip would be meaningless.
+        return "answered directly (no model call)"
     parts = [str(metrics.get("model") or "?")]
 
     ttft = metrics.get("time_to_first_token_s")

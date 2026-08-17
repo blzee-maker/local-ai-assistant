@@ -417,6 +417,76 @@ def consent(
 
 
 @cli.command()
+def system(
+    processes: int = typer.Option(10, "--processes", "-p", help="Top processes to show."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the snapshot as JSON."),
+) -> None:
+    """Show what this machine is doing right now."""
+    from rich.table import Table
+
+    from app.tools.system import sample_processes, system_snapshot
+
+    snapshot = system_snapshot()
+
+    if as_json:
+        procs = sample_processes(limit=processes)
+        print(json.dumps({**snapshot, "processes": [p.__dict__ for p in procs]}, indent=2))
+        return
+
+    memory_info = snapshot["memory"]
+    used_style = "err" if memory_info["percent_used"] >= 85 else "ok"
+
+    console.print("\n[bot]System[/bot]")
+    console.print(
+        f"  CPU        {snapshot['cpu_percent']:>5.0f}%  "
+        f"[meta]{snapshot['cpu_count']} cores[/meta]"
+    )
+    console.print(
+        f"  Memory     [{used_style}]{memory_info['percent_used']:>5.0f}%[/{used_style}]  "
+        f"[meta]{memory_info['available_gb']:.2f} GB free of "
+        f"{memory_info['total_gb']:.2f} GB[/meta]"
+    )
+    if snapshot["swap"]["total_gb"]:
+        console.print(
+            f"  Swap       {snapshot['swap']['percent_used']:>5.0f}%  "
+            f"[meta]{snapshot['swap']['total_gb']:.1f} GB total[/meta]"
+        )
+    battery = snapshot.get("battery")
+    if battery:
+        state = "charging" if battery["plugged_in"] else "on battery"
+        left = f", ~{battery['minutes_left']} min left" if battery["minutes_left"] else ""
+        console.print(f"  Battery    {battery['percent']:>5}%  [meta]{state}{left}[/meta]")
+    console.print(f"  Uptime     {snapshot['uptime_hours']:>5.1f}h")
+
+    for disk in snapshot["disks"]:
+        style = "err" if disk["percent_used"] >= 90 else "meta"
+        console.print(
+            f"  {disk['mount']:<10} [{style}]{disk['percent_used']:>5.0f}%[/{style}]  "
+            f"[meta]{disk['free_gb']:.1f} GB free of {disk['total_gb']:.1f} GB[/meta]"
+        )
+
+    procs = sample_processes(limit=processes)
+    table = Table(title=f"Top {len(procs)} processes", title_style="bot")
+    table.add_column("PID", justify="right", style="meta")
+    table.add_column("Name")
+    table.add_column("CPU", justify="right")
+    table.add_column("Memory", justify="right")
+    for proc in procs:
+        table.add_row(
+            str(proc.pid), proc.name,
+            f"{proc.cpu_percent:.1f}%", f"{proc.memory_mb:,.0f} MB",
+        )
+    console.print()
+    console.print(table)
+
+    if memory_info["percent_used"] >= 85:
+        console.print(
+            "[warn]Memory is nearly exhausted — the most likely cause of "
+            "slowness on this machine.[/warn]"
+        )
+
+
+@cli.command()
 def memory(
     remember: str = typer.Option(None, "--remember", help="Store a fact."),
     forget: str = typer.Option(None, "--forget", help="Delete a fact by id, or 'all'."),

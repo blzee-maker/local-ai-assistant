@@ -26,5 +26,8 @@ prompt_toolkit>=3.0    # REPL line editing + persistent history
 # depends on it directly to decode images rather than guess from byte markers.
 pillow>=10.0
 
+# ── System awareness ──────────────────────────────────────────
+psutil>=5.9           # CPU/memory/disk/battery/process inspection and control
+
 # ── Dev ───────────────────────────────────────────────────────
 pytest>=8.0
