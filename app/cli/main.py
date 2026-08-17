@@ -802,7 +802,11 @@ def tools(
 
     risk_style = {Risk.READ: "meta", Risk.WRITE: "warn", Risk.DESTRUCTIVE: "err"}
     for tool in sorted(default_tools(), key=lambda t: t.name):
-        if not tool.risk.needs_consent:
+        if tool.risk.needs_confirmation:
+            # "not required" would be true but badly misleading here: there is no
+            # standing grant precisely because every single call is confirmed.
+            permission = "[warn]asks every time[/warn]"
+        elif not tool.risk.needs_consent:
             permission = "[meta]not required[/meta]"
         elif decisions.get(tool.name) is True:
             permission = "[ok]granted[/ok]"
