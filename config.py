@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     piper_voice_path: str = "models/piper/en_US-lessac-medium.onnx"
     tts_summary_threshold_chars: int = 400  # longer replies are summarized before speaking
 
+    # Background daemon. Intervals are deliberately unhurried: this machine has
+    # little memory headroom, and a scheduler that competes with the user for it
+    # is worse than one that notices things a bit later.
+    daemon_index_interval_minutes: float = 30.0
+    daemon_health_interval_minutes: float = 15.0
+    daemon_scan_interval_hours: float = 168.0   # weekly
+    daemon_tick_seconds: float = 30.0           # how often due jobs are checked
+
     # Local file browsing (Phase 4.5). Only these roots are ever exposed.
     allowed_file_dirs: list[str] = Field(default_factory=_default_file_dirs)
     file_search_max_results: int = 25

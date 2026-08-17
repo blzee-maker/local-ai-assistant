@@ -130,6 +130,7 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 | `tools` | List capabilities, permissions, and what they've done |
 | `memory` | Show or change what the assistant remembers about you |
 | `system` | CPU, memory, disk, battery, and top processes |
+| `daemon` | Background jobs: `run`, `once`, `status`, `briefing` |
 | `say <text>` | Speak text aloud (`--out file.wav` to save instead) |
 | `listen` | Record from the mic and transcribe (`--ask` to answer it) |
 | `models` | List locally available models |
@@ -163,6 +164,68 @@ question with and without `--rag` to see the difference.
   and keeps each heading attached to its body. This matters: naive fixed-width
   chunking sliced "HIPAA" in half and detached the "Compliance" heading, dropping
   that chunk from rank 1 to rank 6 and causing the model to miss the answer.
+
+## The background daemon
+
+```bash
+python assistant.py daemon run          # foreground, Ctrl-C to stop
+python assistant.py daemon status -n 10 # schedule + recent runs
+python assistant.py daemon once <job>   # run one now
+python assistant.py daemon briefing     # what happened while you were away
+```
+
+| Job | Every | Does |
+|---|---|---|
+| `index_new_files` | 30m | Indexes documents that appeared in your folders |
+| `system_health` | 15m | Watches for sustained memory / disk / battery pressure |
+| `disk_scan` | weekly | Refreshes the duplicate & integrity report |
+
+Drop a document in Downloads and it becomes answerable without you doing
+anything:
+
+```
+16:54:00 · index_new_files started
+16:54:00 · index_new_files: indexed 1
+16:54:00 ! Indexed 1 new document(s): daemon_live_probe.md
+```
+
+### Restraint is the whole design
+
+The daemon acts while nobody is watching, so most of its design is about what it
+declines to do:
+
+- **An absent user is not consent.** Jobs run with no confirmer attached, so any
+  capability needing permission refuses outright. This is why the registry's
+  "no confirmer means no" default was built before anything could run unattended.
+- **Revoking file consent stops it.** Both file-touching jobs skip with
+  *"file analysis has not been approved"* rather than proceeding on a permission
+  granted for something else.
+- **Expensive work never runs on launch.** A weekly disk scan is scheduled a full
+  interval out on first start, so restarting the daemon can't trigger it.
+- **The first sweep records a baseline instead of ingesting everything.** You
+  asked for *new* files to be picked up, not for your entire Documents folder to
+  be silently absorbed. 1,970 files were noted as seen; nothing was indexed.
+- **Quiet runs stay quiet.** Only findings worth acting on are flagged (`!`); a
+  briefing that reports every uneventful sweep is one nobody reads.
+- **Jobs run one at a time**, because on a machine with under a gigabyte free a
+  parallel scheduler is a second workload competing with you.
+
+### Why polling, not `watchdog`
+
+Filesystem events were the obvious choice and were rejected. Documents and
+Desktop are OneDrive-synced here, and sync churn emits a steady stream of
+create/modify events for files that did not change in any way a person would
+recognise. A watcher also holds a thread and OS handles open permanently to
+notice files whose indexing is not urgent. A periodic mtime sweep reuses the
+walker that already exists, costs nothing between runs, and cannot miss a file
+because an event fired while the daemon was stopped.
+
+### Failure doesn't compound
+
+A job that raises is recorded and the loop continues — one broken sweep must not
+take down the process running the others. Repeated failures back the job off
+exponentially (capped) rather than hammering a broken dependency every interval,
+and a single success clears the count.
 
 ## System awareness
 
@@ -496,12 +559,13 @@ file request. Holding it constant keeps the model warm.
 python -m pytest tests/ -q
 ```
 
-168 tests, all using synthesized fixtures so the suite never reads personal
+185 tests, all using synthesized fixtures so the suite never reads personal
 files. They cover both directions of the integrity verifier (healthy files must
 not be flagged; damaged files must be), the staged duplicate detector, the
 consent scope rules, the read-only guarantee, the offline model guard and model
 fallback, tool routing and permissions, memory recall and forgetting, the
-process-termination guards, and the eval harness's own scoring functions.
+process-termination guards, daemon scheduling and restraint, and the eval
+harness's own scoring functions.
 
 Two habits worth keeping:
 

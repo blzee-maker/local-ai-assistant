@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
 import typer
 
@@ -414,6 +415,173 @@ def consent(
         console.print(f"[meta]decided {when}[/meta]")
         for root in record.approved_roots:
             console.print(f"  [meta]{root}[/meta]")
+
+
+daemon_cli = typer.Typer(
+    name="daemon",
+    help="Background jobs: indexing new files, watching health, periodic scans.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+cli.add_typer(daemon_cli)
+
+
+def _daemon_printer():
+    """Render scheduler events as they happen."""
+    styles = {
+        "start": "meta", "ok": "ok", "skip": "meta",
+        "error": "err", "notable": "warn", "info": "meta", "stop": "meta",
+    }
+
+    def emit(level: str, message: str) -> None:
+        import datetime
+
+        stamp = datetime.datetime.now().strftime("%H:%M:%S")
+        style = styles.get(level, "meta")
+        prefix = "!" if level == "notable" else "·"
+        console.print(f"[meta]{stamp}[/meta] {prefix} [{style}]{message}[/{style}]")
+
+    return emit
+
+
+@daemon_cli.command("run")
+def daemon_run(
+    once: bool = typer.Option(False, "--once", help="Run everything due, then exit."),
+    tick: float = typer.Option(None, "--tick", help="Seconds between checks."),
+) -> None:
+    """Start the background daemon in the foreground (Ctrl-C to stop)."""
+    from app.daemon import Scheduler
+
+    scheduler = Scheduler(_assistant(), on_event=_daemon_printer())
+
+    if once:
+        ran = scheduler.tick()
+        if not ran:
+            console.print("[meta]nothing was due[/meta]")
+        return
+
+    console.print("[bot]Assistant daemon[/bot] [meta]Ctrl-C to stop[/meta]")
+    scheduler.run_forever(tick_seconds=tick)
+
+
+@daemon_cli.command("once")
+def daemon_once(
+    job: str = typer.Argument(..., help="Job name, or 'all' for everything due."),
+) -> None:
+    """Run a single job now, ignoring its schedule."""
+    from app.daemon import Scheduler
+
+    scheduler = Scheduler(_assistant(), on_event=_daemon_printer())
+
+    if job == "all":
+        if not scheduler.tick():
+            console.print("[meta]nothing was due[/meta]")
+        return
+
+    target = next((j for j in scheduler.jobs if j.name == job), None)
+    if target is None:
+        err_console.print(
+            f"[err]no such job: {job}[/err] "
+            f"[hint]known: {', '.join(j.name for j in scheduler.jobs)}[/hint]"
+        )
+        raise typer.Exit(1)
+
+    result = scheduler.run_job(target)
+    raise typer.Exit(0 if result.outcome in {"ok", "skipped"} else 1)
+
+
+@daemon_cli.command("status")
+def daemon_status(
+    history: int = typer.Option(0, "--history", "-n", help="Also show recent runs."),
+) -> None:
+    """Show what is scheduled, when it last ran, and what it found."""
+    import datetime
+
+    from rich.table import Table
+
+    from app.daemon import Scheduler
+
+    scheduler = Scheduler(_assistant())
+    journal = scheduler.journal
+    now = time.time()
+
+    table = Table(title="Scheduled jobs", title_style="bot")
+    table.add_column("Job")
+    table.add_column("Every", justify="right", style="meta")
+    table.add_column("Last run", style="meta")
+    table.add_column("Next", justify="right", style="meta")
+    table.add_column("Outcome")
+
+    for job in scheduler.jobs:
+        state = journal.state(job.name)
+        due = scheduler.next_due(job, now)
+
+        if job.interval_s >= 3600:
+            every = f"{job.interval_s / 3600:.0f}h"
+        else:
+            every = f"{job.interval_s / 60:.0f}m"
+
+        if state.last_run is None:
+            last = "never"
+        else:
+            last = datetime.datetime.fromtimestamp(state.last_run).strftime("%m-%d %H:%M")
+
+        remaining = due - now
+        nxt = "due now" if remaining <= 0 else (
+            f"{remaining / 3600:.1f}h" if remaining >= 3600 else f"{remaining / 60:.0f}m"
+        )
+
+        outcome = state.last_outcome or "—"
+        style = {"ok": "ok", "skipped": "meta", "error": "err", "failed": "err"}.get(
+            outcome, "meta"
+        )
+        detail = f" [meta]{state.last_detail}[/meta]" if state.last_detail else ""
+        table.add_row(job.name, every, last, nxt, f"[{style}]{outcome}[/{style}]{detail}")
+
+    console.print(table)
+
+    if history:
+        runs = journal.history(limit=history)
+        if runs:
+            recent = Table(title=f"Last {len(runs)} run(s)", title_style="bot")
+            recent.add_column("When", style="meta")
+            recent.add_column("Job")
+            recent.add_column("Took", justify="right", style="meta")
+            recent.add_column("Outcome")
+            recent.add_column("Detail", style="meta", overflow="fold")
+            for run in runs:
+                when = datetime.datetime.fromtimestamp(run.at).strftime("%m-%d %H:%M:%S")
+                style = {"ok": "ok", "skipped": "meta"}.get(run.outcome, "err")
+                recent.add_row(
+                    when, run.job, f"{run.duration:.1f}s",
+                    f"[{style}]{run.outcome}[/{style}]", run.detail or "",
+                )
+            console.print(recent)
+
+
+@daemon_cli.command("briefing")
+def daemon_briefing(
+    hours: float = typer.Option(24.0, "--hours", help="How far back to summarise."),
+    speak: bool = typer.Option(False, "--speak", help="Read the briefing aloud."),
+) -> None:
+    """Summarise what the daemon did while you were away."""
+    from app.daemon import Journal, briefing
+
+    with Journal() as journal:
+        text = briefing(journal, since_hours=hours)
+
+    console.print(f"\n[bot]Briefing — last {hours:.0f}h[/bot]")
+    for line in text.splitlines():
+        console.print(f"  {line}")
+
+    if speak:
+        from app.cli import audio
+
+        if not audio.available():
+            err_console.print("[err]no audio output[/err]")
+            raise typer.Exit(1)
+        wav, _summarized = _assistant().speak(text)
+        audio.play_wav(wav)
 
 
 @cli.command()
