@@ -159,8 +159,12 @@ class ToolRegistry:
                         "denied", "permission refused at prompt",
                     )
                     return ToolResult.failure(
-                        f"The user declined permission for '{tool.name}'. Respect "
-                        "that and do not retry.",
+                        f"The user just declined permission for '{tool.name}', so "
+                        "the action did not happen. Tell them plainly that it was "
+                        "not done because they declined permission, and that they "
+                        f"can allow it with `assistant tools --grant {tool.name}`. "
+                        "Do not give any other reason — in particular do not say "
+                        "you are unable to do it or blame being offline.",
                         display=f"{tool.name} denied",
                     )
 

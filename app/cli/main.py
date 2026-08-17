@@ -36,6 +36,7 @@ def chat(
     ),
     model: str = typer.Option(None, "--model", "-m", help="Model for this session."),
     speak: bool = typer.Option(False, "--speak", help="Read replies aloud."),
+    resume: bool = typer.Option(False, "--resume", "-r", help="Continue the last conversation."),
 ) -> None:
     """Start an interactive chat session."""
     from app.cli.repl import Session, run
@@ -43,6 +44,7 @@ def chat(
     run(
         _assistant(),
         Session(use_rag=rag, allow_files=files, model=model, speak=speak),
+        resume=resume,
     )
 
 
@@ -99,6 +101,7 @@ def ask(
                     "answer": reply,
                     "sources": terminal.sources if terminal else [],
                     "tool_used": terminal.tool_used if terminal else None,
+                    "recalled": terminal.recalled if terminal else None,
                     "metrics": terminal.metrics if terminal else None,
                 },
                 indent=2,
@@ -108,6 +111,7 @@ def ask(
 
     render.end_stream()
     if not quiet and terminal is not None:
+        render.print_recalled(terminal.recalled)
         render.print_tool_used(terminal.tool_used)
         render.print_sources(terminal.sources)
         render.print_metrics(terminal.metrics)
@@ -410,6 +414,75 @@ def consent(
         console.print(f"[meta]decided {when}[/meta]")
         for root in record.approved_roots:
             console.print(f"  [meta]{root}[/meta]")
+
+
+@cli.command()
+def memory(
+    remember: str = typer.Option(None, "--remember", help="Store a fact."),
+    forget: str = typer.Option(None, "--forget", help="Delete a fact by id, or 'all'."),
+    sessions: bool = typer.Option(False, "--sessions", help="List saved conversations."),
+    show: int = typer.Option(None, "--show", help="Replay a saved conversation by id."),
+) -> None:
+    """Show or change what the assistant remembers about you."""
+    assistant = _assistant()
+    mem = assistant.memory
+
+    if remember:
+        stored, outcome = mem.remember(remember)
+        if stored is None:
+            err_console.print(f"[err]{outcome}[/err]")
+            raise typer.Exit(1)
+        console.print(f"[ok]{outcome}[/ok] [meta]#{stored.id} {stored.text}[/meta]")
+        return
+
+    if forget:
+        if forget.lower() == "all":
+            count = mem.forget_all()
+            console.print(f"[ok]forgot {count} fact(s)[/ok]")
+        elif forget.isdigit():
+            if mem.forget(int(forget)):
+                console.print(f"[ok]forgot #{forget}[/ok]")
+            else:
+                console.print(f"[warn]no memory #{forget}[/warn]")
+                raise typer.Exit(1)
+        else:
+            err_console.print("[err]--forget takes an id or 'all'[/err]")
+            raise typer.Exit(1)
+        return
+
+    if sessions:
+        saved = mem.sessions()
+        if not saved:
+            console.print("[warn]no saved conversations[/warn]")
+            return
+        console.print(render.sessions_table(saved))
+        console.print("[meta]assistant memory --show <#>  ·  assistant chat --resume[/meta]")
+        return
+
+    if show is not None:
+        stored = mem.store.messages(show)
+        if not stored:
+            console.print(f"[warn]no conversation #{show}[/warn]")
+            raise typer.Exit(1)
+        for message in stored:
+            label = "you" if message.role == "user" else "assistant"
+            style = "user" if message.role == "user" else "bot"
+            console.print(f"[{style}]{label}[/{style}] {message.content[:500]}\n")
+        return
+
+    facts = mem.memories()
+    if not facts:
+        console.print(
+            "[warn]nothing remembered yet[/warn] "
+            '[hint]assistant memory --remember "..."[/hint]'
+        )
+        console.print(
+            "[meta]Facts are only stored when you ask — nothing is inferred in "
+            "the background.[/meta]"
+        )
+        return
+    console.print(render.memories_table(facts))
+    console.print("[meta]assistant memory --forget <id|all>[/meta]")
 
 
 @cli.command()

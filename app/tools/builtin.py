@@ -156,6 +156,89 @@ class DiskReportTool(Tool):
         )
 
 
+class RememberTool(Tool):
+    """Store a fact the user explicitly asked to be kept.
+
+    WRITE rather than READ: it puts durable, personal information on disk. That
+    earns a permission prompt the first time, and an audit entry every time —
+    the user should be able to answer "what does it know about me, and when did
+    it decide to keep that?" without guessing.
+    """
+
+    name = "remember"
+    description = "Store something the user explicitly asked you to remember"
+    risk = Risk.WRITE
+
+    # Only phrasings that *ask* for storage. "I remember that film" is not a
+    # request to remember anything, so the verb alone is not enough.
+    _TRIGGERS = (
+        "remember that", "remember this", "remember my", "remember i",
+        "don't forget", "dont forget", "keep in mind", "make a note",
+        "note that", "take note", "store this", "save this",
+        "from now on", "for future reference",
+    )
+
+    def schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": (
+                    "Store a fact for future conversations. Use only when the user "
+                    "explicitly asks you to remember, note, or not forget something."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "fact": {
+                            "type": "string",
+                            "description": (
+                                "The fact to store, rewritten as a standalone "
+                                "statement, e.g. 'The user's dog is called Rex'."
+                            ),
+                        }
+                    },
+                    "required": ["fact"],
+                },
+            },
+        }
+
+    def matches(self, text: str) -> bool:
+        lowered = text.lower()
+        return any(trigger in lowered for trigger in self._TRIGGERS)
+
+    def run(self, arguments: dict, context: ToolContext) -> ToolResult:
+        fact = str(arguments.get("fact") or "").strip()
+        if not fact:
+            # Backstop invocations carry no arguments; keep the sentence rather
+            # than storing nothing, since the user did ask for something.
+            fact = context.request_text.strip()
+        if not fact:
+            return ToolResult.failure(
+                "The user asked you to remember something but did not say what. "
+                "Ask them what to remember."
+            )
+
+        memory, outcome = context.assistant.memory.remember(fact)
+        if memory is None:
+            return ToolResult.failure(
+                "Nothing could be stored. Tell the user plainly.",
+                display="nothing to remember",
+            )
+
+        return ToolResult(
+            ok=True,
+            content=(
+                f"You have stored this for future conversations: \"{memory.text}\"\n"
+                "Confirm briefly to the user that you will remember it. Do not "
+                "invent any other details.\n\n"
+                f"User's message: {context.request_text}"
+            ),
+            display=f"{outcome}: {memory.text}",
+            meta={"memory_id": memory.id, "text": memory.text, "outcome": outcome},
+        )
+
+
 def default_tools() -> list[Tool]:
     """The tools registered for a normal session."""
-    return [OpenLocalFileTool(), DiskReportTool()]
+    return [OpenLocalFileTool(), DiskReportTool(), RememberTool()]

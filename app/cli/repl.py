@@ -34,6 +34,10 @@ HELP = """[bot]Commands[/bot]
   [user]/mic[/user]              record a question from the microphone
   [user]/ingest[/user] [meta]<path>[/meta]   index a local file for RAG
   [user]/find[/user] [meta]<query>[/meta]    search your allowed folders
+  [user]/remember[/user] [meta]<fact>[/meta] store something for future sessions
+  [user]/memories[/user]         show what the assistant remembers
+  [user]/forget[/user] [meta]<id|all>[/meta] delete a remembered fact
+  [user]/history[/user]          replay this saved conversation
   [user]/docs[/user]             list indexed documents
   [user]/reset[/user]            wipe the document index
   [user]/clear[/user]            forget this conversation (keeps the index)
@@ -158,6 +162,45 @@ def handle_command(assistant: Assistant, session: Session, line: str) -> bool:
         else:
             console.print("[warn]no matching files[/warn]")
 
+    elif cmd == "remember":
+        if not arg:
+            console.print("[err]usage: /remember <fact>[/err]")
+        else:
+            memory, outcome = assistant.memory.remember(arg)
+            if memory is None:
+                console.print(f"[err]{outcome}[/err]")
+            else:
+                console.print(f"[ok]{outcome}[/ok] [meta]#{memory.id} {memory.text}[/meta]")
+
+    elif cmd == "memories":
+        memories = assistant.memory.memories()
+        if memories:
+            console.print(render.memories_table(memories))
+        else:
+            console.print("[warn]nothing remembered yet[/warn] [hint]/remember <fact>[/hint]")
+
+    elif cmd == "forget":
+        if arg.lower() == "all":
+            count = assistant.memory.forget_all()
+            console.print(f"[ok]forgot {count} fact(s)[/ok]")
+        elif arg.isdigit():
+            if assistant.memory.forget(int(arg)):
+                console.print(f"[ok]forgot #{arg}[/ok]")
+            else:
+                console.print(f"[warn]no memory #{arg}[/warn]")
+        else:
+            console.print("[err]usage: /forget <id|all>[/err]")
+
+    elif cmd == "history":
+        stored = assistant.memory.history()
+        if not stored:
+            console.print("[warn]nothing saved for this conversation yet[/warn]")
+        else:
+            for message in stored:
+                label = "you" if message.role == "user" else "assistant"
+                style = "user" if message.role == "user" else "bot"
+                console.print(f"[{style}]{label}[/{style}] {message.content[:400]}")
+
     elif cmd == "docs":
         docs = assistant.documents()
         if docs:
@@ -219,6 +262,10 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
     reply = "".join(collected)
     if reply:
         render.end_stream()
+        # Persist as we go rather than at exit: a crash or a closed terminal
+        # should not cost the conversation, which is the whole point.
+        assistant.memory.record("user", text)
+        assistant.memory.record("assistant", reply)
 
     if terminal is not None and terminal.type == "error":
         console.print(f"[err]{terminal.error}[/err]")
@@ -233,6 +280,7 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
     session.history.append(ChatMessage(role="assistant", content=reply))
 
     if terminal is not None:
+        render.print_recalled(terminal.recalled)
         render.print_tool_used(terminal.tool_used)
         render.print_sources(terminal.sources)
         render.print_metrics(terminal.metrics)
@@ -322,9 +370,29 @@ def _make_reader():
     return read_rich
 
 
-def run(assistant: Assistant, session: Session | None = None) -> None:
+def run(
+    assistant: Assistant,
+    session: Session | None = None,
+    resume: bool = False,
+) -> None:
     session = session or Session()
     console.print(BANNER)
+
+    assistant.memory.start_session(resume=resume)
+    if resume:
+        previous = assistant.memory.history(limit=20)
+        if previous:
+            console.print(f"[meta]resumed — {len(previous)} earlier message(s)[/meta]")
+            for message in previous:
+                session.history.append(
+                    ChatMessage(role=message.role, content=message.content)
+                )
+            last = previous[-1]
+            console.print(
+                f"[meta]last: {last.role} — {last.content[:100]}[/meta]"
+            )
+        else:
+            console.print("[meta]no earlier conversation to resume[/meta]")
 
     health = assistant.health()
     if not health["healthy"]:

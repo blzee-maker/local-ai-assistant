@@ -45,6 +45,20 @@ class RagService:
         self._store.add(vectors, metas)
         return {"source": source_name, "chunks": len(chunks)}
 
+    # ── embedding ────────────────────────────────────────────────
+    def embed(self, texts: list[str]):
+        """Public embedding access, shared with the memory store.
+
+        Memory needs vectors too, and loading a second copy of the ONNX model
+        would cost ~86MB for nothing on an 8GB target (rule 9). One model, two
+        consumers.
+        """
+        return self._embedder.embed(texts)
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._embedder.dim
+
     # ── retrieval ────────────────────────────────────────────────
     def retrieve(self, query: str, k: int | None = None) -> list[dict[str, Any]]:
         query_vec = self._embedder.embed([query])

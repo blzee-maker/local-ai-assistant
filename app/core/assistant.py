@@ -58,6 +58,10 @@ class AssistantEvent:
     # registry means this is no longer always a file (rule 4: an action that ran
     # silently is indistinguishable from one that did not).
     tool_used: dict[str, Any] | None = None
+    # Which remembered facts were injected this turn. Shown for the same reason:
+    # an assistant that quietly consults a private dossier about you is worse
+    # than one that says which facts it used.
+    recalled: dict[str, Any] | None = None
     metrics: dict[str, Any] | None = None
     error: str | None = None
 
@@ -71,6 +75,7 @@ class Assistant:
         self._engine = engine or build_engine()
         self._rag: Any = None
         self._voice: Any = None
+        self._memory: Any = None
         self._tools = tools
         self._tools_ready = tools is not None
 
@@ -92,6 +97,20 @@ class Assistant:
             self._tools.register_all(default_tools())
             self._tools_ready = True
         return self._tools
+
+    @property
+    def memory(self) -> Any:
+        """MemoryService — conversation persistence and recalled facts.
+
+        Shares the RAG embedder rather than loading its own copy, but only
+        reaches for it lazily: with nothing remembered, recall never touches the
+        model at all.
+        """
+        if self._memory is None:
+            from app.memory import MemoryService
+
+            self._memory = MemoryService(embed_fn=lambda texts: self.rag.embed(texts))
+        return self._memory
 
     @property
     def rag(self) -> Any:
@@ -189,6 +208,7 @@ class Assistant:
         model: str | None = None,
         temperature: float | None = None,
         confirm: Callable[[str], bool] | None = None,
+        use_memory: bool = True,
     ) -> Iterator[AssistantEvent]:
         """Run one turn, yielding token events then a single done/error event.
 
@@ -208,6 +228,21 @@ class Assistant:
         last_user_text = next(
             (m.content for m in reversed(turn_history) if m.role == "user"), ""
         )
+
+        # Recall runs before tools and RAG: a remembered fact is context for the
+        # whole turn, not an alternative to it. Injected as its own system
+        # message so it survives a tool rewriting the user's message.
+        recalled: dict[str, Any] | None = None
+        if use_memory:
+            recall = self.memory.recall(last_user_text)
+            if recall:
+                turn_history.insert(1, ChatMessage(role="system", content=recall.as_prompt()))
+                recalled = {
+                    "count": len(recall.memories),
+                    "display": recall.display(),
+                    "texts": [m.text for m in recall.memories],
+                    "scores": [round(s, 3) for s in recall.scores],
+                }
 
         # One dispatch for every capability. This used to be a chain of keyword
         # gates where each new feature added a boolean to every sibling branch,
@@ -287,6 +322,7 @@ class Assistant:
                         type="done",
                         sources=sources,
                         tool_used=tool_used,
+                        recalled=recalled,
                         metrics={
                             "model": event.model,
                             "fell_back": event.fell_back,

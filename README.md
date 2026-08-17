@@ -128,6 +128,7 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 | `scan` | Analyse your folders for duplicates, corruption, idle storage |
 | `consent` | Show or change permission to analyse your files |
 | `tools` | List capabilities, permissions, and what they've done |
+| `memory` | Show or change what the assistant remembers about you |
 | `say <text>` | Speak text aloud (`--out file.wav` to save instead) |
 | `listen` | Record from the mic and transcribe (`--ask` to answer it) |
 | `models` | List locally available models |
@@ -162,6 +163,65 @@ question with and without `--rag` to see the difference.
   chunking sliced "HIPAA" in half and detached the "Compliance" heading, dropping
   that chunk from rank 1 to rank 6 and causing the model to miss the answer.
 
+## Memory
+
+Conversations persist, and facts you ask it to keep come back later:
+
+```bash
+python assistant.py chat --resume            # continue the last conversation
+python assistant.py memory                   # what it remembers
+python assistant.py memory --remember "..."
+python assistant.py memory --forget 3        # or --forget all
+python assistant.py memory --sessions        # past conversations
+```
+
+In a session: `/remember`, `/memories`, `/forget <id|all>`, `/history`.
+
+### Nothing is inferred in the background
+
+The obvious design is to run an extraction pass over every turn asking the model
+"what's worth remembering here?" It was rejected twice over. It costs a second
+generation per turn on a machine where a turn already takes 20 seconds, and more
+importantly it means silently accumulating inferred claims about someone that
+they never approved, cannot see the reasoning behind, and which may simply be
+wrong.
+
+**So a fact is stored only when you ask for one to be stored** — through a tool
+that declares `write` risk and therefore asks permission the first time, and is
+audited every time. Recall is automatic, because reading back something you
+explicitly asked to be kept is the thing you asked for.
+
+Every recall is shown, with its similarity score:
+
+```
+Your dog's name is Rex, and he's a beagle.
+recalled 1 memory:
+  · The user's dog is called Rex and is a beagle  (0.57)
+```
+
+An assistant that quietly consults a private dossier about you is worse than one
+that shows its working.
+
+### The relevance floor was measured, not guessed
+
+Injecting vaguely-related personal trivia into a 3B model's context makes answers
+worse, so recall only fires above a cosine floor. That number came from probing
+the real embedder:
+
+| Query type | Score range |
+|---|---|
+| Unrelated ("capital of Peru", "reverse a list", "7×6") | 0.05 – 0.14 |
+| Related ("what is my dog called", "how do you like to answer me") | 0.34 – 0.57 |
+
+A first guess of `0.45` sat *inside* the positive range and silently dropped a
+genuine recall. The floor is `0.28`, in the empty band between the clusters with
+roughly 2× margin over the highest false match. Unit tests use a fake embedder
+and pass their own threshold, so the constant is only meaningful against the
+real model — which is why it was set from measurement rather than intuition.
+
+Memory shares the RAG embedder rather than loading a second copy, and with
+nothing stored it never touches the model at all.
+
 ## Capabilities (the tool registry)
 
 Everything the assistant can *do* — read a document, report on your disk, and
@@ -176,7 +236,7 @@ python assistant.py tools --revoke <name>
 | Risk | Consent | Example |
 |---|---|---|
 | `read` | inherits folder consent | open a document, report a scan |
-| `write` | asked once, remembered | (none yet) |
+| `write` | asked once, remembered | remember a fact |
 | `destructive` | **confirmed every single call** | (none yet) |
 
 ### Why a registry rather than more `if` branches
@@ -367,12 +427,12 @@ file request. Holding it constant keeps the model warm.
 python -m pytest tests/ -q
 ```
 
-112 tests, all using synthesized fixtures so the suite never reads personal
+133 tests, all using synthesized fixtures so the suite never reads personal
 files. They cover both directions of the integrity verifier (healthy files must
 not be flagged; damaged files must be), the staged duplicate detector, the
-consent scope rules, the read-only guarantee, the offline model guard and memory
-fallback, tool routing and permissions, and the eval harness's own scoring
-functions.
+consent scope rules, the read-only guarantee, the offline model guard and model
+fallback, tool routing and permissions, memory recall and forgetting, and the
+eval harness's own scoring functions.
 
 Tool tests assert on *which* tool fired, not merely that one did — a gate
 collision doesn't raise, it just quietly answers from the wrong source.

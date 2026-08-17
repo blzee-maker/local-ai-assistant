@@ -113,6 +113,46 @@ def print_tool_used(used: dict[str, Any] | None) -> None:
     console.print(f"[{style}]{display}[/{style}]")
 
 
+def print_recalled(recalled: dict[str, Any] | None) -> None:
+    """Name the facts that were consulted. An assistant that silently reads a
+    private dossier about you is worse than one that shows its working."""
+    if not recalled:
+        return
+    console.print(f"[meta]{recalled['display']}:[/meta]")
+    for text, score in zip(recalled.get("texts", []), recalled.get("scores", [])):
+        console.print(f"  [meta]· {text}  ({score:.2f})[/meta]")
+
+
+def memories_table(memories: list[Any]) -> Table:
+    table = Table(title=f"{len(memories)} remembered fact(s)", title_style="bot")
+    table.add_column("#", justify="right", style="meta")
+    table.add_column("Fact")
+    table.add_column("Stored", style="meta")
+    table.add_column("Used", justify="right", style="meta")
+    for memory in memories:
+        age = (
+            "today" if memory.age_days < 1
+            else f"{memory.age_days:.0f}d ago"
+        )
+        table.add_row(str(memory.id), memory.text, age, str(memory.used_count))
+    return table
+
+
+def sessions_table(sessions: list[Any]) -> Table:
+    import datetime
+
+    table = Table(title=f"{len(sessions)} conversation(s)", title_style="bot")
+    table.add_column("#", justify="right", style="meta")
+    table.add_column("Started", style="meta")
+    table.add_column("Messages", justify="right")
+    table.add_column("First message")
+    for info in sessions:
+        started = datetime.datetime.fromtimestamp(info.started_at).strftime("%m-%d %H:%M")
+        title = (info.title or "")[:60]
+        table.add_row(str(info.id), started, str(info.message_count), title)
+    return table
+
+
 def documents_table(docs: list[dict[str, Any]], total_chunks: int) -> Table:
     table = Table(title=f"Indexed documents — {total_chunks} chunks", title_style="bot")
     table.add_column("Source")

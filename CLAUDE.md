@@ -87,6 +87,7 @@ app/rag/        Chunking, ONNX embeddings, FAISS store.
 app/voice/      Whisper STT + Piper TTS behind swappable seams.
 app/analyzer/   Read-only disk analysis. Never writes to user files.
 app/tools/      Tool registry: one dispatch path for every capability.
+app/memory/     Conversation persistence + explicitly-remembered facts.
 app/consent.py  Recorded, scoped permission for reading user folders.
 evals/          Golden-dataset RAG benchmark.
 ```
@@ -133,3 +134,9 @@ These cost real debugging time. Do not rediscover them.
 - Keyword pre-filters are for *cost*, not correctness: they exist so ordinary
   chat doesn't pay for tool selection. They must never be the only thing
   deciding whether a destructive action runs.
+- Never infer and store facts about the user in the background. Memory is
+  written when they ask for it, shown when it is used, and genuinely deleted
+  when they forget it.
+- Similarity thresholds are *measured against the real embedder*, not guessed.
+  A plausible-looking constant tuned against a fake silently dropped real
+  recalls; record the probe numbers next to the constant.
