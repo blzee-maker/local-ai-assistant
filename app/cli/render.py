@@ -101,13 +101,16 @@ def print_sources(sources: list[dict[str, Any]]) -> None:
         )
 
 
-def print_opened_file(opened: dict[str, Any] | None) -> None:
-    if not opened:
+def print_tool_used(used: dict[str, Any] | None) -> None:
+    """Show what a tool did. Rule 4: an action nobody saw is indistinguishable
+    from one that never happened."""
+    if not used:
         return
-    console.print(
-        f"[meta]opened {opened['name']} from {opened['root']} "
-        f"· modified {opened['modified']} · {opened['chars']:,} chars[/meta]"
-    )
+    display = used.get("display") or used.get("tool") or ""
+    if not display:
+        return
+    style = "warn" if used.get("failed") else "meta"
+    console.print(f"[{style}]{display}[/{style}]")
 
 
 def documents_table(docs: list[dict[str, Any]], total_chunks: int) -> Table:

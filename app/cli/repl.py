@@ -179,6 +179,17 @@ def handle_command(assistant: Assistant, session: Session, line: str) -> bool:
     return True
 
 
+def confirm_action(prompt: str) -> bool:
+    """Ask before a tool acts. Anything but an explicit yes is a no."""
+    console.print(f"\n[warn]{prompt}[/warn]")
+    try:
+        answer = input("Allow? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print("[meta]no answer — treating as no[/meta]")
+        return False
+    return answer in {"y", "yes"}
+
+
 def run_turn(assistant: Assistant, session: Session, text: str) -> None:
     """Send one user message and stream the reply."""
     session.history.append(ChatMessage(role="user", content=text))
@@ -193,6 +204,7 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
             allow_file_access=session.allow_files,
             model=session.model,
             temperature=session.temperature,
+            confirm=confirm_action,
         ):
             if event.type == "token":
                 collected.append(event.text)
@@ -221,7 +233,7 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
     session.history.append(ChatMessage(role="assistant", content=reply))
 
     if terminal is not None:
-        render.print_opened_file(terminal.opened_file)
+        render.print_tool_used(terminal.tool_used)
         render.print_sources(terminal.sources)
         render.print_metrics(terminal.metrics)
 

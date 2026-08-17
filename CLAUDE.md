@@ -86,6 +86,7 @@ app/engines/    LLMEngine seam; Ollama impl; offline policy guard.
 app/rag/        Chunking, ONNX embeddings, FAISS store.
 app/voice/      Whisper STT + Piper TTS behind swappable seams.
 app/analyzer/   Read-only disk analysis. Never writes to user files.
+app/tools/      Tool registry: one dispatch path for every capability.
 app/consent.py  Recorded, scoped permission for reading user folders.
 evals/          Golden-dataset RAG benchmark.
 ```

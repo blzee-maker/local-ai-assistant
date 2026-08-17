@@ -127,6 +127,7 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 | `find <query>` | Search your allowed folders |
 | `scan` | Analyse your folders for duplicates, corruption, idle storage |
 | `consent` | Show or change permission to analyse your files |
+| `tools` | List capabilities, permissions, and what they've done |
 | `say <text>` | Speak text aloud (`--out file.wav` to save instead) |
 | `listen` | Record from the mic and transcribe (`--ask` to answer it) |
 | `models` | List locally available models |
@@ -160,6 +161,50 @@ question with and without `--rag` to see the difference.
   and keeps each heading attached to its body. This matters: naive fixed-width
   chunking sliced "HIPAA" in half and detached the "Compliance" heading, dropping
   that chunk from rank 1 to rank 6 and causing the model to miss the answer.
+
+## Capabilities (the tool registry)
+
+Everything the assistant can *do* — read a document, report on your disk, and
+whatever comes next — registers as a tool with a declared risk level:
+
+```bash
+python assistant.py tools           # what it can do, and what you've permitted
+python assistant.py tools --audit   # what it actually did
+python assistant.py tools --revoke <name>
+```
+
+| Risk | Consent | Example |
+|---|---|---|
+| `read` | inherits folder consent | open a document, report a scan |
+| `write` | asked once, remembered | (none yet) |
+| `destructive` | **confirmed every single call** | (none yet) |
+
+### Why a registry rather than more `if` branches
+
+The first two capabilities were hardwired into the turn loop, each with its own
+keyword gate and grounding template. They already collided: *"find my duplicate
+files"* matched **both** the file gate and the disk gate. It was resolved by
+checking disk first — an invisible, untested ordering that would not have
+survived a third capability. Every feature also added a boolean to every sibling
+branch, so the dispatch condition had grown to four terms for two features.
+
+Now both tools are offered to the model together and it picks based on the
+sentence. The audit log shows the routing decision (`via: model`), so the
+collision case is observable rather than a matter of faith.
+
+Three rules keep it honest:
+
+- **Ordinary chat pays nothing.** Cheap keyword matchers run first; if none
+  match, no tool-selection call is made at all.
+- **The backstop refuses to guess.** If the model picks nothing and exactly one
+  tool matched, that tool runs. If *several* matched, it declines — guessing
+  wrong is worse than doing nothing.
+- **The backstop never fires for a destructive tool.** A keyword match is enough
+  to guess "they want to read a file". It is not enough to decide something gets
+  deleted.
+
+Nothing is authorised by default: with no confirmer wired up — a script, or the
+future background daemon — every permission question answers *no*.
 
 ## Disk analysis
 
@@ -322,11 +367,15 @@ file request. Holding it constant keeps the model warm.
 python -m pytest tests/ -q
 ```
 
-91 tests, all using synthesized fixtures so the suite never reads personal
+112 tests, all using synthesized fixtures so the suite never reads personal
 files. They cover both directions of the integrity verifier (healthy files must
 not be flagged; damaged files must be), the staged duplicate detector, the
 consent scope rules, the read-only guarantee, the offline model guard and memory
-fallback, and the eval harness's own scoring functions.
+fallback, tool routing and permissions, and the eval harness's own scoring
+functions.
+
+Tool tests assert on *which* tool fired, not merely that one did — a gate
+collision doesn't raise, it just quietly answers from the wrong source.
 
 ## Evals
 

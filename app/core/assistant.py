@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal
 
 from app import files as filesvc
-from app.core import diskintent, fileintent
 from app.engines import ChatMessage, GenerationOptions, build_engine
 from app.engines.base import LLMEngine
+from app.tools import Dispatch, ToolContext, ToolRegistry, default_tools
 from config import settings
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -54,21 +54,44 @@ class AssistantEvent:
     type: Literal["token", "done", "error"]
     text: str = ""
     sources: list[dict[str, Any]] = field(default_factory=list)
-    opened_file: dict[str, Any] | None = None
+    # What a tool did this turn, if anything. Named generically because the
+    # registry means this is no longer always a file (rule 4: an action that ran
+    # silently is indistinguishable from one that did not).
+    tool_used: dict[str, Any] | None = None
     metrics: dict[str, Any] | None = None
     error: str | None = None
 
 
 class Assistant:
-    def __init__(self, engine: LLMEngine | None = None) -> None:
+    def __init__(
+        self,
+        engine: LLMEngine | None = None,
+        tools: ToolRegistry | None = None,
+    ) -> None:
         self._engine = engine or build_engine()
         self._rag: Any = None
         self._voice: Any = None
+        self._tools = tools
+        self._tools_ready = tools is not None
 
     # ── lazily-built subsystems ──────────────────────────────────
     @property
     def engine(self) -> LLMEngine:
         return self._engine
+
+    @property
+    def tools(self) -> ToolRegistry:
+        """Every capability the assistant can invoke.
+
+        Built lazily so commands that never chat (`doctor`, `models`) don't open
+        the ledger database they will not use.
+        """
+        if self._tools is None:
+            self._tools = ToolRegistry()
+        if not self._tools_ready:
+            self._tools.register_all(default_tools())
+            self._tools_ready = True
+        return self._tools
 
     @property
     def rag(self) -> Any:
@@ -156,92 +179,6 @@ class Assistant:
                 out.append(event.token)
         return "".join(out).strip() or text
 
-    # ── model-driven local file opening ──────────────────────────
-    def _try_open_file(
-        self, history: list[ChatMessage]
-    ) -> tuple[dict[str, Any] | None, str | None]:
-        """Resolve a file request against `history` (already a private copy).
-
-        Returns ``(opened_file_meta, correction_note)``:
-
-        * ``(meta, None)`` — a file was opened and the last user message rewritten
-        * ``(None, note)`` — nothing opened; `note` is a system hint that keeps the
-          model honest ("couldn't find it") instead of the false and unhelpful
-          "I can't access files"
-        """
-        last_user = next((m for m in reversed(history) if m.role == "user"), None)
-        if last_user is None:
-            return None, None
-        request_text = last_user.content
-
-        name: str | None = None
-        folder: str | None = fileintent.extract_folder(request_text)
-        try:
-            turn = self._engine.chat(
-                [
-                    ChatMessage(role="system", content=fileintent.FILE_DECISION_SYSTEM),
-                    ChatMessage(role="user", content=request_text),
-                ],
-                tools=[fileintent.FILE_TOOL],
-                options=GenerationOptions(temperature=0.0),
-            )
-            for tc in turn.tool_calls:
-                if tc.name == fileintent.FILE_TOOL_NAME:
-                    name = str(tc.arguments.get("name") or "").strip() or None
-                    folder = str(tc.arguments.get("folder") or "").strip() or folder
-                    break
-        except Exception:
-            pass  # tool-calling unsupported or failed → heuristic below
-
-        if not name:
-            name = fileintent.extract_name(request_text)
-        if not name:
-            return None, (
-                "The user asked for a file but the name was unclear. Ask them for "
-                "the exact file name. Do not claim you cannot access files."
-            )
-
-        match = filesvc.find_latest(name, folder)
-        if not match:
-            where = f" in {folder}" if folder else ""
-            return None, (
-                f"You searched the user's folders for a file matching '{name}'"
-                f"{where} but found none. Tell them you couldn't find that file and "
-                "ask them to check the name. Do not claim you cannot access files."
-            )
-
-        try:
-            text = self.rag.read_file(match["path"])
-        except Exception as exc:
-            return None, (
-                f"You found '{match['name']}' but couldn't read it ({exc}). Tell "
-                "the user the file could not be read."
-            )
-
-        # Persist for follow-up RAG questions (skip if already ingested).
-        if match["name"] not in {d["source"] for d in self.rag.documents()}:
-            try:
-                self.rag.ingest_file(match["path"], match["name"])
-            except Exception:
-                pass
-
-        last_user.content = fileintent.FILE_GROUNDING.format(
-            name=match["name"],
-            root=match["root"],
-            modified=match["modified"],
-            text=text[:FILE_INJECTION_CHARS],
-            question=request_text,
-        )
-        return (
-            {
-                "name": match["name"],
-                "root": match["root"],
-                "modified": match["modified"],
-                "chars": len(text),
-            },
-            None,
-        )
-
     # ── the turn ─────────────────────────────────────────────────
     def chat_stream(
         self,
@@ -251,11 +188,16 @@ class Assistant:
         allow_file_access: bool = True,
         model: str | None = None,
         temperature: float | None = None,
+        confirm: Callable[[str], bool] | None = None,
     ) -> Iterator[AssistantEvent]:
         """Run one turn, yielding token events then a single done/error event.
 
         `history` is copied before any grounding rewrite, so the caller's list is
         left exactly as the user typed it.
+
+        `confirm` lets the front end ask the user before a tool acts. Omitting it
+        means every permission question answers "no" — a non-interactive caller
+        must not authorise anything by default.
         """
         turn_history = copy.deepcopy(history)
         if not turn_history or turn_history[0].role != "system":
@@ -267,38 +209,50 @@ class Assistant:
             (m.content for m in reversed(turn_history) if m.role == "user"), ""
         )
 
-        # Disk questions are answered from the last cached scan. Checked before
-        # file-opening because "find my duplicate files" trips both gates, and
-        # the scan data is the better answer.
-        grounded_on_scan = False
-        if diskintent.looks_like_disk_question(last_user_text):
-            grounded, note = diskintent.ground_prompt(last_user_text)
+        # One dispatch for every capability. This used to be a chain of keyword
+        # gates where each new feature added a boolean to every sibling branch,
+        # and overlapping gates were separated by ordering — invisible, untested,
+        # and unable to survive a third capability.
+        tool_used: dict[str, Any] | None = None
+        dispatch = Dispatch()
+        if allow_file_access:
+            dispatch = self.tools.dispatch(
+                last_user_text,
+                self._engine,
+                ToolContext(
+                    assistant=self,
+                    request_text=last_user_text,
+                    confirm=confirm,
+                ),
+            )
+
+        if dispatch.result is not None:
             last_user = next(
                 (m for m in reversed(turn_history) if m.role == "user"), None
             )
-            if grounded and last_user is not None:
-                last_user.content = grounded
-                grounded_on_scan = True
-            elif note:
-                turn_history.insert(1, ChatMessage(role="system", content=note))
-                grounded_on_scan = True
-
-        # Model-driven file opening: if the latest message asks for a local file,
-        # let the model choose it, fetch the newest match, ground on its text.
-        opened_file: dict[str, Any] | None = None
-        if (
-            not grounded_on_scan
-            and allow_file_access
-            and fileintent.looks_like_file_request(last_user_text)
-        ):
-            opened_file, correction = self._try_open_file(turn_history)
-            if correction:
-                turn_history.insert(1, ChatMessage(role="system", content=correction))
+            if dispatch.grounded and last_user is not None:
+                last_user.content = dispatch.result.content
+                tool_used = {
+                    "tool": dispatch.invocation.tool if dispatch.invocation else "",
+                    "display": dispatch.result.display,
+                    **dispatch.result.meta,
+                }
+            elif dispatch.correction:
+                # Keep the model honest: it wanted a capability that could not
+                # deliver, so it says why instead of denying it has the ability.
+                turn_history.insert(
+                    1, ChatMessage(role="system", content=dispatch.correction)
+                )
+                tool_used = {
+                    "tool": dispatch.invocation.tool if dispatch.invocation else "",
+                    "display": dispatch.result.display,
+                    "failed": True,
+                }
 
         # RAG: retrieve context for the latest user turn and ground the prompt.
-        # Skipped when a file was just opened — that message is already grounded.
+        # Skipped when a tool already grounded this message.
         sources: list[dict[str, Any]] = []
-        if opened_file is None and not grounded_on_scan and use_rag and self.rag.count > 0:
+        if not dispatch.grounded and use_rag and self.rag.count > 0:
             last_user = next(
                 (m for m in reversed(turn_history) if m.role == "user"), None
             )
@@ -332,7 +286,7 @@ class Assistant:
                     yield AssistantEvent(
                         type="done",
                         sources=sources,
-                        opened_file=opened_file,
+                        tool_used=tool_used,
                         metrics={
                             "model": event.model,
                             "fell_back": event.fell_back,

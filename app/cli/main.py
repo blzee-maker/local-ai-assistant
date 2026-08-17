@@ -98,7 +98,7 @@ def ask(
                     "ok": True,
                     "answer": reply,
                     "sources": terminal.sources if terminal else [],
-                    "opened_file": terminal.opened_file if terminal else None,
+                    "tool_used": terminal.tool_used if terminal else None,
                     "metrics": terminal.metrics if terminal else None,
                 },
                 indent=2,
@@ -108,7 +108,7 @@ def ask(
 
     render.end_stream()
     if not quiet and terminal is not None:
-        render.print_opened_file(terminal.opened_file)
+        render.print_tool_used(terminal.tool_used)
         render.print_sources(terminal.sources)
         render.print_metrics(terminal.metrics)
 
@@ -410,6 +410,99 @@ def consent(
         console.print(f"[meta]decided {when}[/meta]")
         for root in record.approved_roots:
             console.print(f"  [meta]{root}[/meta]")
+
+
+@cli.command()
+def tools(
+    grant: str = typer.Option(None, "--grant", help="Permit a tool by name."),
+    revoke: str = typer.Option(None, "--revoke", help="Withdraw a tool's permission."),
+    revoke_all: bool = typer.Option(False, "--revoke-all", help="Withdraw every permission."),
+    audit: bool = typer.Option(False, "--audit", help="Show what tools have done."),
+    limit: int = typer.Option(20, "--limit", "-n", help="Audit entries to show."),
+) -> None:
+    """List the assistant's capabilities, their permissions, and their history."""
+    import datetime
+
+    from rich.table import Table
+
+    from app.tools import Risk, ToolLedger, default_tools
+
+    ledger = ToolLedger()
+
+    if revoke_all:
+        count = ledger.revoke()
+        console.print(f"[ok]withdrew {count} permission(s)[/ok]")
+        return
+
+    if revoke:
+        count = ledger.revoke(revoke)
+        if count:
+            console.print(f"[ok]permission for {revoke} withdrawn[/ok]")
+        else:
+            console.print(f"[warn]no recorded permission for {revoke}[/warn]")
+        return
+
+    if grant:
+        registered = {t.name: t for t in default_tools()}
+        tool = registered.get(grant)
+        if tool is None:
+            err_console.print(
+                f"[err]no such tool: {grant}[/err] "
+                f"[hint]known: {', '.join(sorted(registered))}[/hint]"
+            )
+            raise typer.Exit(1)
+        ledger.record_decision(tool.name, tool.risk.value, True)
+        console.print(f"[ok]{grant} permitted[/ok]")
+        return
+
+    if audit:
+        entries = ledger.history(limit=limit)
+        if not entries:
+            console.print("[warn]no tool activity recorded yet[/warn]")
+            return
+        table = Table(title=f"Last {len(entries)} tool action(s)", title_style="bot")
+        table.add_column("When", style="meta")
+        table.add_column("Tool")
+        table.add_column("Risk", style="meta")
+        table.add_column("Via", style="meta")
+        table.add_column("Outcome")
+        for entry in entries:
+            when = datetime.datetime.fromtimestamp(entry.at).strftime("%m-%d %H:%M")
+            style = {"ok": "ok", "denied": "warn", "error": "err"}.get(
+                entry.outcome, "meta"
+            )
+            table.add_row(
+                when, entry.tool, entry.risk, entry.source,
+                f"[{style}]{entry.outcome}[/{style}]",
+            )
+        console.print(table)
+        return
+
+    decisions = dict((name, granted) for name, granted, _r, _d in ledger.grants())
+    table = Table(title="Capabilities", title_style="bot")
+    table.add_column("Tool")
+    table.add_column("Risk")
+    table.add_column("Permission")
+    table.add_column("What it does", style="meta")
+
+    risk_style = {Risk.READ: "meta", Risk.WRITE: "warn", Risk.DESTRUCTIVE: "err"}
+    for tool in sorted(default_tools(), key=lambda t: t.name):
+        if not tool.risk.needs_consent:
+            permission = "[meta]not required[/meta]"
+        elif decisions.get(tool.name) is True:
+            permission = "[ok]granted[/ok]"
+        elif decisions.get(tool.name) is False:
+            permission = "[err]declined[/err]"
+        else:
+            permission = "[warn]will ask[/warn]"
+        table.add_row(
+            tool.name,
+            f"[{risk_style[tool.risk]}]{tool.risk.value}[/{risk_style[tool.risk]}]",
+            permission,
+            tool.description,
+        )
+    console.print(table)
+    console.print("[meta]assistant tools --audit  ·  --grant <name>  ·  --revoke <name>[/meta]")
 
 
 @cli.command()
