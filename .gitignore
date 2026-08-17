@@ -31,3 +31,4 @@ data/cli_history.txt
 # Tests
 .pytest_cache/
 data/last_scan.json
+evals/__pycache__/

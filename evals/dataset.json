@@ -1,0 +1,118 @@
+{
+  "document": "sample_docs/nimbusedge_handbook.md",
+  "note": "Every fact here is fictional. That is deliberate: llama3.2 cannot answer any of it from its weights, so a correct answer proves retrieval worked rather than that the model already knew.",
+  "cases": [
+    {
+      "id": "warranty-length",
+      "kind": "fact",
+      "question": "How long is the hardware warranty on the NimbusEdge X1?",
+      "must_retrieve": ["26-month"],
+      "answer_any_of": ["26-month", "26 month"],
+      "note": "26 months is deliberately unusual. A model answering from priors says 12 or 24."
+    },
+    {
+      "id": "founders",
+      "kind": "fact",
+      "question": "Who founded Halden Systems and when?",
+      "must_retrieve": ["Priya Venkataraman"],
+      "answer_any_of": ["Venkataraman"],
+      "also_expect": ["2019"]
+    },
+    {
+      "id": "max-context",
+      "kind": "fact",
+      "question": "What is the maximum model context length the device supports?",
+      "must_retrieve": ["16,384"],
+      "answer_any_of": ["16,384", "16384", "16 384"]
+    },
+    {
+      "id": "weight",
+      "kind": "fact",
+      "question": "How much does the unit weigh?",
+      "must_retrieve": ["620 grams"],
+      "answer_any_of": ["620 gram", "620g", "620 g"]
+    },
+    {
+      "id": "peak-power",
+      "kind": "fact",
+      "question": "What is the peak power draw?",
+      "must_retrieve": ["41 watts"],
+      "answer_any_of": ["41 watt", "41w"]
+    },
+    {
+      "id": "encryption",
+      "kind": "fact",
+      "question": "What encryption algorithm protects data at rest?",
+      "must_retrieve": ["XTS-AES-256"],
+      "answer_any_of": ["xts-aes-256", "xts aes 256"]
+    },
+    {
+      "id": "fips-certificate",
+      "kind": "exact-token",
+      "question": "What is the FIPS 140-3 certificate number?",
+      "must_retrieve": ["HX7-2025-0114"],
+      "answer_any_of": ["hx7-2025-0114", "hx7 2025 0114"],
+      "note": "Rare alphanumeric token — the classic weak spot for pure vector search."
+    },
+    {
+      "id": "sla-plus",
+      "kind": "fact",
+      "question": "What response time do NimbusCare Plus customers get?",
+      "must_retrieve": ["four-hour"],
+      "answer_any_of": ["four-hour", "four hour", "4-hour", "4 hour"]
+    },
+    {
+      "id": "preloaded-models",
+      "kind": "fact",
+      "question": "Which models ship preloaded on the device?",
+      "must_retrieve": ["Aurora-Coder-3B"],
+      "answer_any_of": ["aurora-2b", "aurora 2b"],
+      "also_expect": ["aurora-coder-3b", "aurora coder 3b"]
+    },
+    {
+      "id": "factory-reset-paraphrase",
+      "kind": "paraphrase",
+      "question": "I need to wipe the box back to how it came out of the factory. What do I need?",
+      "must_retrieve": ["recovery key"],
+      "answer_any_of": ["recovery key"],
+      "note": "Shares almost no vocabulary with the source text. Pure semantic-match test."
+    },
+    {
+      "id": "warranty-paraphrase",
+      "kind": "paraphrase",
+      "question": "If the hardware breaks, how long am I covered for?",
+      "must_retrieve": ["26-month"],
+      "answer_any_of": ["26-month", "26 month"],
+      "note": "Avoids the word 'warranty' entirely."
+    },
+    {
+      "id": "sealed-mode-multi",
+      "kind": "multi-hop",
+      "question": "If I enable Sealed Mode, can I still side-load a new model over USB?",
+      "must_retrieve": ["Sealed Mode"],
+      "answer_any_of": ["no", "cannot", "can't", "disable", "not possible"],
+      "note": "Requires joining the hardware section (USB-C is the only side-load path) with the compliance section (Sealed Mode disables all USB ports)."
+    },
+    {
+      "id": "absent-price",
+      "kind": "absent",
+      "question": "How much does the NimbusEdge X1 cost in US dollars?",
+      "expect_refusal": true,
+      "note": "Price appears nowhere in the handbook. The model must decline, not invent a number."
+    },
+    {
+      "id": "absent-wifi",
+      "kind": "absent",
+      "question": "Does the NimbusEdge X1 support Wi-Fi 7 and Bluetooth 5.4?",
+      "expect_refusal": true,
+      "note": "The doc mentions wireless radios only via the kill switch. Tempting to over-infer."
+    },
+    {
+      "id": "absent-ceo",
+      "kind": "absent",
+      "question": "Who is the current CEO of Halden Systems?",
+      "expect_refusal": true,
+      "note": "Founders are named; the CEO is not. Tests whether the model conflates the two."
+    }
+  ]
+}

@@ -18,9 +18,16 @@ from .store import VectorStore
 
 
 class RagService:
-    def __init__(self) -> None:
+    def __init__(self, store_dir: str | None = None) -> None:
+        """`store_dir` overrides the configured vector-store location.
+
+        Defaults to `settings.vector_store_dir` for normal use. The eval harness
+        passes a throwaway directory so a benchmark run neither reads nor
+        pollutes the user's real index — otherwise scores would depend on
+        whatever happened to be ingested that day, and reruns would drift.
+        """
         self._embedder = Embedder(settings.embedding_model, settings.embedding_cache_dir)
-        self._store = VectorStore(settings.vector_store_dir, self._embedder.dim)
+        self._store = VectorStore(store_dir or settings.vector_store_dir, self._embedder.dim)
 
     # ── ingestion ────────────────────────────────────────────────
     def ingest_file(self, path: str, source_name: str) -> dict[str, Any]:
