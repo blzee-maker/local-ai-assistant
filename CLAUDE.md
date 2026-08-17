@@ -132,6 +132,10 @@ These cost real debugging time. Do not rediscover them.
 - **OneDrive placeholder files** download when read. Check the cloud attributes
   before opening anything (`app/analyzer/walker.py`).
 - **`prompt_toolkit` needs a real TTY**; fall back to `input()` when piped.
+- **sqlite3 connections belong to one thread.** Opening a `Journal` on the main
+  thread and using it from a worker raises "SQLite objects created in a thread
+  can only be used in that same thread". Open the connection *in* the thread
+  that will use it (see `app/daemon/watcher.py`).
 - **Memory is genuinely tight** (~7.8GB total, often <1GB free). Ollama returns
   HTTP 5xx when a model cannot load. That is what the fallback model is for.
 

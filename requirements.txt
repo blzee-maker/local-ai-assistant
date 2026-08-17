@@ -28,6 +28,7 @@ pillow>=10.0
 
 # ── System awareness ──────────────────────────────────────────
 psutil>=5.9           # CPU/memory/disk/battery/process inspection and control
+watchdog>=4.0         # instant indexing for Downloads while the daemon runs
 
 # ── Dev ───────────────────────────────────────────────────────
 pytest>=8.0

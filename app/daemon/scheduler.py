@@ -126,8 +126,16 @@ class Scheduler:
     def stop(self) -> None:
         self._stopping = True
 
-    def run_forever(self, tick_seconds: float | None = None) -> None:
-        """Block, running due jobs until interrupted."""
+    def run_forever(
+        self, tick_seconds: float | None = None, watch: bool = True
+    ) -> None:
+        """Block, running due jobs until interrupted.
+
+        Order matters. The catch-up sweep runs *before* the watcher starts:
+        filesystem events only exist while the daemon is awake, so anything that
+        arrived while it was stopped was never announced and is only found by
+        sweeping. Arming the doorbell first would leave that gap unclosed.
+        """
         interval = tick_seconds or settings.daemon_tick_seconds
 
         def handle_signal(_signum, _frame):
@@ -143,19 +151,38 @@ class Scheduler:
                 pass  # not the main thread, or unsupported on this platform
 
         self._emit("info", f"watching {len(self._jobs)} job(s)")
-        while not self._stopping:
-            try:
-                self.tick()
-            except Exception as exc:  # the loop itself must never die
-                self._emit("error", f"scheduler error: {exc}")
 
-            slept = 0.0
-            while slept < interval and not self._stopping:
-                time.sleep(min(1.0, interval - slept))
-                slept += 1.0
+        # Catch up on everything missed while stopped, then arm the doorbell.
+        try:
+            self.tick()
+        except Exception as exc:
+            self._emit("error", f"scheduler error: {exc}")
 
-        self._journal.close()
-        self._emit("stop", "stopped")
+        watcher = None
+        if watch and not self._stopping:
+            from app.daemon.watcher import DownloadsWatcher
+
+            watcher = DownloadsWatcher(self._assistant, on_event=self._on_event)
+            if not watcher.start():
+                watcher = None
+
+        try:
+            while not self._stopping:
+                slept = 0.0
+                while slept < interval and not self._stopping:
+                    time.sleep(min(1.0, interval - slept))
+                    slept += 1.0
+                if self._stopping:
+                    break
+                try:
+                    self.tick()
+                except Exception as exc:  # the loop itself must never die
+                    self._emit("error", f"scheduler error: {exc}")
+        finally:
+            if watcher is not None:
+                watcher.stop()
+            self._journal.close()
+            self._emit("stop", "stopped")
 
 
 # ── briefing ─────────────────────────────────────────────────────

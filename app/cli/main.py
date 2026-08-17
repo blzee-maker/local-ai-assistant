@@ -448,6 +448,10 @@ def _daemon_printer():
 def daemon_run(
     once: bool = typer.Option(False, "--once", help="Run everything due, then exit."),
     tick: float = typer.Option(None, "--tick", help="Seconds between checks."),
+    watch: bool = typer.Option(
+        True, "--watch/--no-watch",
+        help="Also index Downloads instantly via filesystem events.",
+    ),
 ) -> None:
     """Start the background daemon in the foreground (Ctrl-C to stop)."""
     from app.daemon import Scheduler
@@ -461,7 +465,7 @@ def daemon_run(
         return
 
     console.print("[bot]Assistant daemon[/bot] [meta]Ctrl-C to stop[/meta]")
-    scheduler.run_forever(tick_seconds=tick)
+    scheduler.run_forever(tick_seconds=tick, watch=watch)
 
 
 @daemon_cli.command("once")

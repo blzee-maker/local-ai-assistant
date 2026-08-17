@@ -176,18 +176,12 @@ python assistant.py daemon briefing     # what happened while you were away
 
 | Job | Every | Does |
 |---|---|---|
-| `index_new_files` | 30m | Indexes documents that appeared in your folders |
+| `index_new_files` | 30m | Sweeps every folder for documents that appeared |
 | `system_health` | 15m | Watches for sustained memory / disk / battery pressure |
 | `disk_scan` | weekly | Refreshes the duplicate & integrity report |
 
-Drop a document in Downloads and it becomes answerable without you doing
-anything:
-
-```
-16:54:00 · index_new_files started
-16:54:00 · index_new_files: indexed 1
-16:54:00 ! Indexed 1 new document(s): daemon_live_probe.md
-```
+Plus a filesystem watcher on Downloads for near-instant indexing (below). Drop a
+document in Downloads and it becomes answerable without you doing anything.
 
 ### Restraint is the whole design
 
@@ -210,15 +204,44 @@ declines to do:
 - **Jobs run one at a time**, because on a machine with under a gigabyte free a
   parallel scheduler is a second workload competing with you.
 
-### Why polling, not `watchdog`
+### The doorbell and the mailbox
 
-Filesystem events were the obvious choice and were rejected. Documents and
-Desktop are OneDrive-synced here, and sync churn emits a steady stream of
-create/modify events for files that did not change in any way a person would
-recognise. A watcher also holds a thread and OS handles open permanently to
-notice files whose indexing is not urgent. A periodic mtime sweep reuses the
-walker that already exists, costs nothing between runs, and cannot miss a file
-because an event fired while the daemon was stopped.
+Two mechanisms, covering different failures:
+
+- **The doorbell** (`watchdog`) watches **Downloads only** and indexes documents
+  within seconds of them landing.
+- **The mailbox** (a periodic sweep) checks every folder on a timer.
+
+Downloads gets the doorbell because it is not cloud-synced and it is where you
+actually save the thing you are about to ask about. Documents and Desktop stay on
+the sweep: they are OneDrive-synced here, and sync churn emits a constant stream
+of create/modify events for files nobody touched.
+
+**The doorbell only rings while the daemon is awake.** Anything that arrives
+while it is stopped is never announced — those notifications are simply gone. So
+the catch-up sweep runs *first* at startup, and only then is the watcher armed.
+The doorbell is an optimisation on top of the mailbox, never a replacement:
+
+```
+01:28:27 · watching 3 job(s)                              ← mailbox catches up
+01:28:27 · watching C:\Users\Om\Downloads for new documents  ← doorbell armed
+01:28:50 ! Indexed doorbell_test.md (1 chunks)            ← 6s after the file landed
+```
+
+If watchdog is missing or the observer cannot start, indexing keeps working at
+sweep pace and says so. `--no-watch` disables the doorbell.
+
+### A file appearing is not a file being finished
+
+The hard part is not noticing the file, it is knowing when it is *done*. A
+browser writes `report.pdf.crdownload`, grows it for a minute, then renames it;
+a plain copy fires a creation event while the file is still zero bytes. Indexing
+at first sight records a fragment as though it were the document.
+
+So `.crdownload`, `.part`, `.tmp` and `~$` scratch files are ignored outright,
+and a path is only read once its **size has stopped changing**. In the live test
+above the write ran from `01:28:41` to `01:28:44` and indexing happened at
+`01:28:50` — it waited.
 
 ### Failure doesn't compound
 
@@ -559,13 +582,13 @@ file request. Holding it constant keeps the model warm.
 python -m pytest tests/ -q
 ```
 
-185 tests, all using synthesized fixtures so the suite never reads personal
+210 tests, all using synthesized fixtures so the suite never reads personal
 files. They cover both directions of the integrity verifier (healthy files must
 not be flagged; damaged files must be), the staged duplicate detector, the
 consent scope rules, the read-only guarantee, the offline model guard and model
 fallback, tool routing and permissions, memory recall and forgetting, the
-process-termination guards, daemon scheduling and restraint, and the eval
-harness's own scoring functions.
+process-termination guards, daemon scheduling and restraint, the watcher's
+finished-file detection, and the eval harness's own scoring functions.
 
 Two habits worth keeping:
 
