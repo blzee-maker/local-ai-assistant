@@ -31,6 +31,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # What the assistant calls itself. Used in the system prompt and the
+    # greeting, so the name is consistent everywhere rather than being a banner
+    # that the model itself knows nothing about.
+    assistant_name: str = "Buddy"
+
     # Which LLMEngine implementation the factory builds.
     engine: str = "ollama"
 

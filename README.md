@@ -112,6 +112,36 @@ python assistant.py doctor
 
 ## Usage
 
+One command brings everything up and starts a conversation:
+
+```powershell
+wake up buddy
+```
+
+That starts the model server if it is down, preloads the model so your first
+question isn't the one that pays for the cold start, launches the background
+daemon, reports what it found, and drops you into chat with your last
+conversation resumed:
+
+```
+Waking Buddy...
+  v model server started
+  v llama3.2:latest warm (25s)
+  v background daemon started (pid 18076)
+  v file access approved
+
+Buddy is ready.  /help for commands
+```
+
+Every step is idempotent — waking an already-awake assistant is a no-op, not a
+second copy of everything. `sleep buddy` stops the daemon; the model server is
+left alone, since other things on the machine may be using it.
+
+Install it once with `scripts/install_shell.ps1`, which adds `wake`, `buddy` and
+an `ai` alias to your PowerShell profile between marked lines you can delete.
+
+### The individual commands
+
 ```bash
 python assistant.py chat                    # interactive session
 python assistant.py ask "what is 2+2?"      # one-shot
@@ -120,6 +150,8 @@ python assistant.py ask "summarize this" --rag --json | jq .answer
 
 | Command | What it does |
 |---|---|
+| `wake` | Start everything and drop into conversation |
+| `sleep` | Stop the background daemon |
 | `chat` | Interactive REPL with slash commands and history |
 | `ask` | One-shot question; reads stdin, `--json` for scripting |
 | `ingest <path>` | Index a document for retrieval |

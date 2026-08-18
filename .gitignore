@@ -35,3 +35,4 @@ evals/__pycache__/
 data/tool_ledger.sqlite3
 data/memory.sqlite3
 data/daemon.sqlite3
+data/daemon.pid

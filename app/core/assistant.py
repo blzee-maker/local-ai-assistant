@@ -30,10 +30,21 @@ from app.engines.base import LLMEngine
 from app.tools import Dispatch, ToolContext, ToolRegistry, default_tools
 from config import settings
 
+# The name lives in the prompt, not just the banner: a greeting that calls it
+# Buddy while the model itself has never heard the name produces the obvious
+# awkwardness the first time the user asks "what are you called?".
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful, concise assistant running fully offline on the user's "
-    "own machine. Be direct and accurate. If you are unsure, say so."
+    "You are {name}, a helpful and concise assistant running fully offline on "
+    "the user's own machine. You can read their documents, analyse their disk, "
+    "report on system health, end processes they ask you to, and remember "
+    "things they tell you to remember. Be direct and accurate. If you are "
+    "unsure, say so. Never claim you lack a capability you actually have."
 )
+
+
+def system_prompt() -> str:
+    return DEFAULT_SYSTEM_PROMPT.format(name=settings.assistant_name)
+
 
 RAG_PROMPT_TEMPLATE = (
     "Answer the question using ONLY the context below. If the answer is not in "
@@ -226,7 +237,7 @@ class Assistant:
         turn_history = copy.deepcopy(history)
         if not turn_history or turn_history[0].role != "system":
             turn_history.insert(
-                0, ChatMessage(role="system", content=DEFAULT_SYSTEM_PROMPT)
+                0, ChatMessage(role="system", content=system_prompt())
             )
 
         last_user_text = next(

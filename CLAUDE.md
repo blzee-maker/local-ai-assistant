@@ -109,11 +109,12 @@ Front ends depend on `app/core`, never the reverse.
 ## Commands
 
 ```bash
+wake up buddy                      # start everything, then talk
 python assistant.py doctor          # diagnose the whole stack first
 python assistant.py chat            # REPL; /rag /files /speak /mic /model
 python assistant.py ask "..."       # one-shot, pipeable, --json
 python assistant.py scan            # disk analysis (consent-gated)
-python -m pytest tests/ -q          # 91 tests
+python -m pytest tests/ -q          # 210 tests
 ```
 
 ## Environment gotchas (Windows)
@@ -131,7 +132,11 @@ These cost real debugging time. Do not rediscover them.
   decoy folder at the old path. Use `app/knownfolders.py`.
 - **OneDrive placeholder files** download when read. Check the cloud attributes
   before opening anything (`app/analyzer/walker.py`).
-- **`prompt_toolkit` needs a real TTY**; fall back to `input()` when piped.
+- **`prompt_toolkit` needs a real console, not just a TTY.** Under
+  `powershell -File`, a shortcut or a scheduled task, stdin can look
+  interactive while Windows gives the process no console screen buffer, and
+  constructing a `PromptSession` raises `NoConsoleScreenBufferError`. Guard
+  the construction, not just `isatty()` (`app/cli/repl._make_reader`).
 - **sqlite3 connections belong to one thread.** Opening a `Journal` on the main
   thread and using it from a worker raises "SQLite objects created in a thread
   can only be used in that same thread". Open the connection *in* the thread

@@ -22,8 +22,19 @@ from config import settings
 
 HISTORY_FILE = Path(settings.upload_dir).parent / "cli_history.txt"
 
-BANNER = """[bot]Local Offline AI Assistant[/bot]
-[meta]Everything runs on this machine. Type /help for commands, /exit to quit.[/meta]"""
+
+def banner() -> str:
+    """Greeting for a directly-launched session.
+
+    Built from the configured name so the assistant is called the same thing
+    here, in the system prompt, and in whatever the user typed to start it.
+    """
+    return (
+        f"[bot]{settings.assistant_name}[/bot]\n"
+        "[meta]Everything runs on this machine. "
+        "Type /help for commands, /exit to quit.[/meta]"
+    )
+
 
 HELP = """[bot]Commands[/bot]
   [user]/rag[/user] [meta]on|off[/meta]      ground answers in your indexed documents
@@ -348,24 +359,42 @@ def clean_input(line: str) -> str:
     return line.lstrip(_INVISIBLE).strip()
 
 
+def read_plain() -> str:
+    """Input with no line editing. Works anywhere, including a bare pipe."""
+    return input()
+
+
 def _make_reader():
     """Return a prompt function suited to how the CLI was invoked.
 
-    prompt_toolkit needs a real terminal — it raises when stdin is a pipe. So a
-    piped session (`echo /docs | assistant chat`, or a test script) falls back to
-    plain input(), trading history and editing for the ability to run headless.
+    prompt_toolkit wants a real terminal, so a piped session (`echo /docs |
+    assistant chat`) falls back to plain input(), trading history and editing
+    for the ability to run headless.
+
+    The isatty() check alone is not enough. Under some hosts — `powershell
+    -File script.ps1`, a shortcut, a scheduled task — stdin can look interactive
+    while Windows has given the process no console screen buffer, and
+    constructing a PromptSession then raises NoConsoleScreenBufferError and
+    takes the whole session down. So construction is guarded too: no line
+    editing is a small loss, a crash on startup is not (rule 10).
     """
     if not sys.stdin.isatty():
-        def read_plain() -> str:
-            return input()
-
         return read_plain
 
-    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    prompt = PromptSession(history=FileHistory(str(HISTORY_FILE)))
+    try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        prompt = PromptSession(history=FileHistory(str(HISTORY_FILE)))
+    except Exception:
+        return read_plain
 
     def read_rich() -> str:
-        return prompt.prompt("\nyou › ")
+        try:
+            return prompt.prompt("\nyou › ")
+        except (KeyboardInterrupt, EOFError):
+            raise
+        except Exception:
+            # The terminal went away mid-session; keep the conversation alive.
+            return read_plain()
 
     return read_rich
 
@@ -374,9 +403,14 @@ def run(
     assistant: Assistant,
     session: Session | None = None,
     resume: bool = False,
+    greet: bool = True,
 ) -> None:
+    """`greet=False` when the caller already introduced itself — `wake` prints
+    its own startup report, and following it with a second banner reads as the
+    program starting twice."""
     session = session or Session()
-    console.print(BANNER)
+    if greet:
+        console.print(banner())
 
     assistant.memory.start_session(resume=resume)
     if resume:

@@ -663,6 +663,9 @@ def memory(
     remember: str = typer.Option(None, "--remember", help="Store a fact."),
     forget: str = typer.Option(None, "--forget", help="Delete a fact by id, or 'all'."),
     sessions: bool = typer.Option(False, "--sessions", help="List saved conversations."),
+    forget_sessions: bool = typer.Option(
+        False, "--forget-sessions", help="Delete all saved conversations."
+    ),
     show: int = typer.Option(None, "--show", help="Replay a saved conversation by id."),
 ) -> None:
     """Show or change what the assistant remembers about you."""
@@ -690,6 +693,14 @@ def memory(
         else:
             err_console.print("[err]--forget takes an id or 'all'[/err]")
             raise typer.Exit(1)
+        return
+
+    if forget_sessions:
+        saved = mem.sessions(limit=10_000)
+        for info in saved:
+            mem.store.delete_session(info.id)
+        console.print(f"[ok]deleted {len(saved)} conversation(s)[/ok]")
+        console.print("[meta]remembered facts are separate — use --forget all[/meta]")
         return
 
     if sessions:
@@ -920,6 +931,78 @@ def doctor() -> None:
     console.print()
     console.print("[ok]All good.[/ok]" if ok else "[err]Some checks failed.[/err]")
     raise typer.Exit(0 if ok else 1)
+
+
+@cli.command()
+def wake(
+    words: list[str] = typer.Argument(
+        None, help="Ignored. Lets you type 'wake up buddy' naturally."
+    ),
+    no_daemon: bool = typer.Option(False, "--no-daemon", help="Skip background jobs."),
+    no_warm: bool = typer.Option(False, "--no-warm", help="Skip preloading the model."),
+    rag: bool = typer.Option(False, "--rag", help="Start with document grounding on."),
+    speak: bool = typer.Option(False, "--speak", help="Read replies aloud."),
+) -> None:
+    """Start everything and drop into conversation."""
+    from app.cli import startup
+    from app.cli.repl import Session, run
+
+    name = settings.assistant_name
+    console.print(f"\n[bot]Waking {name}...[/bot]")
+
+    report = startup.WakeReport()
+
+    def step(label: str, result) -> None:
+        report.add(result)
+        if not result.ok:
+            console.print(f"  [err]x[/err] {label}: {result.message}")
+        elif result.skipped:
+            console.print(f"  [meta]·[/meta] [meta]{result.message}[/meta]")
+        else:
+            console.print(f"  [ok]v[/ok] {result.message}")
+
+    step("model server", startup.ensure_ollama())
+
+    assistant = _assistant()
+
+    # Only worth warming if the server actually came up.
+    if not no_warm and not report.failures:
+        step("model", startup.warm_model(assistant))
+
+    if not no_daemon:
+        step("daemon", startup.ensure_daemon())
+
+    step("consent", startup.consent_state())
+
+    if report.failures:
+        console.print(
+            f"\n[warn]{name} is awake but not at full strength.[/warn] "
+            "[hint]run `doctor` for detail[/hint]"
+        )
+    else:
+        console.print(f"\n[bot]{name} is ready.[/bot] [meta]/help for commands[/meta]")
+
+    run(
+        assistant,
+        Session(use_rag=rag, speak=speak),
+        resume=True,
+        greet=False,  # the startup report above already introduced it
+    )
+
+
+@cli.command()
+def sleep(
+    words: list[str] = typer.Argument(None, help="Ignored, so 'sleep buddy' works."),
+) -> None:
+    """Stop the background daemon. The model server is left running."""
+    from app.cli import startup
+
+    result = startup.stop_daemon()
+    style = "meta" if result.skipped else ("ok" if result.ok else "err")
+    console.print(f"[{style}]{result.message}[/{style}]")
+    # Ollama is deliberately left alone: it is a shared service that other
+    # things on this machine may be using, and stopping it is not ours to do.
+    raise typer.Exit(0 if result.ok else 1)
 
 
 def entrypoint() -> None:
