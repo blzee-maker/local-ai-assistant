@@ -535,3 +535,140 @@ def test_the_disk_scan_still_owns_questions_about_files():
         "what is taking up space on my disk?",
     ):
         assert disk.matches(question), question
+
+
+# ---- answering about *what* is using the machine -----------------
+def test_a_memory_question_is_ordered_by_memory():
+    """The list is truncated after sorting, so the order decides who appears
+    at all. Sorted by CPU and cut to five, "the top 5 things consuming my
+    memory" named the five busiest processes — on a real run the actual
+    largest, llama-server.exe at 2,185 MB, was not in the list."""
+    from app.tools.system import sample_processes
+
+    by_memory = sample_processes(limit=5, sort_by="memory")
+    by_cpu = sample_processes(limit=5, sort_by="cpu")
+
+    assert [p.memory_mb for p in by_memory] == sorted(
+        (p.memory_mb for p in by_memory), reverse=True
+    )
+    assert [p.cpu_percent for p in by_cpu] == sorted(
+        (p.cpu_percent for p in by_cpu), reverse=True
+    )
+    # The point of the fix: the biggest memory user is not missed.
+    assert max(p.memory_mb for p in by_memory) >= max(p.memory_mb for p in by_cpu)
+
+
+def test_the_ordering_follows_the_question():
+    from app.tools.system import preferred_process_sort
+
+    assert preferred_process_sort("top 5 things consuming my memory") == "memory"
+    assert preferred_process_sort("what is eating my RAM?") == "memory"
+    assert preferred_process_sort("what is using my CPU?") == "cpu"
+    assert preferred_process_sort("what is running?") == "cpu"
+
+
+def test_the_process_list_says_how_it_is_ordered():
+    """Presented as a bare "top processes", a memory-ordered list reads as a
+    CPU one and gets ranked wrongly in the answer."""
+    from app.tools.system import describe_processes, sample_processes
+
+    procs = sample_processes(limit=3, sort_by="memory")
+    assert "by memory" in describe_processes(procs, 3, "memory")
+    assert "by CPU" in describe_processes(procs, 3, "cpu")
+
+
+def test_top_processes_matches_the_phrasing_that_missed():
+    """"list top 5 things that are consuming my memory" matched none of the
+    original triggers, so the tool was never a candidate and a totals-only
+    reading answered unopposed — twice, identically."""
+    from app.tools.system import TopProcessesTool
+
+    tool = TopProcessesTool()
+    for question in (
+        "list top 5 things that are consuming my memory",
+        "what programs are taking up my memory?",
+        "which apps use the most RAM?",
+        "what is the biggest memory hog?",
+    ):
+        assert tool.matches(question), question
+
+
+def test_top_processes_is_scored_like_its_competitor():
+    """An unscored tool scores 1 in the backstop while system_status returns
+    its trigger count, so the totals reading won nearly every contest."""
+    from app.tools.system import SystemStatusTool, TopProcessesTool
+
+    question = "what processes are consuming the most memory?"
+    assert TopProcessesTool().match_score(question) >= SystemStatusTool().match_score(
+        question
+    )
+
+
+# ---- depth follows the request ----------------------------------
+def test_a_detailed_memory_report_names_what_used_the_memory():
+    """"Get me a detailed report on memory usage" came back as three lines of
+    totals. A memory report that cannot say where the memory went is not one."""
+    content = SystemStatusTool().run(
+        {}, ctx("get me a detailed report on memory usage")
+    ).content
+    assert "Top processes" in content
+    assert "asked for detail" in content
+
+
+def test_a_narrow_question_still_gets_one_sentence():
+    """The cap exists because the same tool once answered "how much of my
+    memory is in use?" with the processor, the OS and every drive."""
+    content = SystemStatusTool().run({}, ctx("how much memory is in use?")).content
+    assert "in one short sentence" in content
+    assert "Top processes" not in content
+
+
+# ---- narrowing the reading, not the prompt ----------------------
+def test_the_reading_is_narrowed_to_the_area_asked_about():
+    """Filtering moved out of the prompt after two failures. Handed the whole
+    machine and told to report only the memory, the model answered with the
+    processor, the OS and every drive; told to give "every figure, one per
+    line, largest first" it stripped the labels and returned "1. 7.43 GB /
+    2. 0.35 GB / 3. 96%". A section never shown cannot be misquoted."""
+    from app.tools.system import describe_snapshot, system_snapshot
+
+    snapshot = system_snapshot()
+    memory_only = describe_snapshot(snapshot, "memory")
+    assert "Memory:" in memory_only
+    assert "Processor:" not in memory_only
+    assert "Drive " not in memory_only
+
+    disk_only = describe_snapshot(snapshot, "disk")
+    assert "Drive " in disk_only
+    assert "Memory:" not in disk_only
+
+
+def test_a_general_question_still_gets_the_whole_machine():
+    """Narrowing must not cost the overview its content."""
+    from app.tools.system import describe_snapshot, snapshot_focus, system_snapshot
+
+    assert snapshot_focus("give me my system information") is None
+    full = describe_snapshot(system_snapshot(), None)
+    for expected in ("Processor:", "Memory:", "Drive ", "Uptime:"):
+        assert expected in full, expected
+
+
+def test_a_question_spanning_two_areas_is_not_narrowed():
+    """"How much memory and disk space do I have?" is a general enquiry."""
+    from app.tools.system import snapshot_focus
+
+    assert snapshot_focus("how much memory and disk space do I have?") is None
+    assert snapshot_focus("compare my RAM and my CPU") is None
+
+
+def test_the_detailed_reading_carries_no_unrelated_sections():
+    """The whole failure this replaced: a detailed memory report that led with
+    the processor and ended with the drives."""
+    content = SystemStatusTool().run(
+        {}, ctx("get me a detailed report on memory usage")
+    ).content
+    assert "Memory:" in content
+    assert "Top processes" in content
+    assert "Processor:" not in content
+    assert "Drive C" not in content
+

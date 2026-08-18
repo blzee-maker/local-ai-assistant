@@ -186,6 +186,19 @@ These cost real debugging time. Do not rediscover them.
   best-scoring one rather than nothing.
 - The prompt must forbid inventing machine or file facts outright. No keyword
   list will ever be complete, so that instruction is the real backstop.
+- Filter in the tool, not in the prompt. Asking a 3B model to ignore most
+  of what it was handed does not work: given the whole machine and told to
+  report only the memory it answered with the processor, the OS and every
+  drive. A section never shown cannot be misquoted.
+- Sort before you truncate, by whatever the question asked about. A
+  CPU-sorted list cut to five answered "the top 5 things consuming my
+  memory" without the actual largest, a 2.2 GB process, appearing at all.
+- A tool that competes with another for the same questions needs its own
+  `match_score`. The registry scores an unscored tool as 1, so it loses to
+  anything returning a trigger count — `top_processes` lost nearly every
+  resource question to a reading holding no per-process data.
+- Depth follows the request; scope does not widen with it. "Detailed" means
+  more about the subject asked about, never more subjects.
 - Answering more than was asked is its own wrong answer. Told to "report the
   lines above and nothing else", the assistant met "how much of my memory is
   in use?" with the processor, the OS, the memory and every drive. Ground a

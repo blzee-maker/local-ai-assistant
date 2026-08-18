@@ -90,7 +90,11 @@ class ProcessInfo:
         return (self.pid, self.name.lower(), int(self.create_time))
 
 
-def sample_processes(interval: float = 0.4, limit: int | None = None) -> list[ProcessInfo]:
+def sample_processes(
+    interval: float = 0.4,
+    limit: int | None = None,
+    sort_by: str = "cpu",
+) -> list[ProcessInfo]:
     """Snapshot running processes with a real CPU reading.
 
     `cpu_percent()` needs two samples to mean anything; the first call on a
@@ -133,7 +137,14 @@ def sample_processes(interval: float = 0.4, limit: int | None = None) -> list[Pr
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
-    results.sort(key=lambda p: (p.cpu_percent, p.memory_mb), reverse=True)
+    # The ordering is not cosmetic, because the list is then truncated. Sorted
+    # by CPU and cut to five, "the top 5 things consuming my memory" returned
+    # the five busiest processes and called them the biggest memory users —
+    # the actual largest one need not appear at all.
+    if sort_by == "memory":
+        results.sort(key=lambda p: (p.memory_mb, p.cpu_percent), reverse=True)
+    else:
+        results.sort(key=lambda p: (p.cpu_percent, p.memory_mb), reverse=True)
     return results[:limit] if limit else results
 
 
@@ -251,11 +262,39 @@ def system_snapshot() -> dict[str, Any]:
     }
 
 
-def describe_snapshot(snapshot: dict[str, Any]) -> str:
-    """Snapshot as prose the model can answer from."""
+def snapshot_focus(text: str) -> str | None:
+    """Which part of the machine the question is about, if it is only one.
+
+    Filtering happens here rather than in the prompt because asking a 3B model
+    to ignore most of what it was handed does not work. Given the whole machine
+    plus a ten-row process table and told to report only the memory, it answered
+    "a detailed report on memory usage" with the processor, the OS and every
+    drive; when the process table was added it started dropping the process
+    names instead. A section never shown also cannot be misquoted.
+    """
+    lowered = text.lower()
+    areas = {
+        "memory": ("memory", "ram", "swap"),
+        "disk": ("disk", "drive", "storage", "space", "ssd", "hard drive"),
+        "cpu": ("cpu", "processor", "core"),
+    }
+    hits = [name for name, words in areas.items() if any(w in lowered for w in words)]
+    # Only when the question is about exactly one area. Two means a comparison
+    # or a general enquiry, and both want the whole reading.
+    return hits[0] if len(hits) == 1 else None
+
+
+def describe_snapshot(snapshot: dict[str, Any], focus: str | None = None) -> str:
+    """Snapshot as prose the model can answer from.
+
+    `focus` narrows it to one area (see `snapshot_focus`); the default is the
+    whole machine, which is what a general question wants.
+    """
     memory = snapshot["memory"]
     hardware = snapshot.get("hardware") or {}
-    lines = []
+    sections: dict[str, list[str]] = {
+        "hardware": [], "cpu": [], "memory": [], "misc": [], "disk": []
+    }
 
     if hardware:
         cores = hardware.get("cpu_cores_physical")
@@ -265,8 +304,8 @@ def describe_snapshot(snapshot: dict[str, Any]) -> str:
         if cores or threads:
             cpu_line += f" ({cores or '?'} cores / {threads or '?'} threads"
             cpu_line += f", up to {speed} GHz)" if speed else ")"
-        lines.append(cpu_line)
-        lines.append(
+        sections["hardware"].append(cpu_line)
+        sections["hardware"].append(
             f"Operating system: {hardware.get('os', 'unknown')} "
             f"({hardware.get('architecture', '')})".strip()
         )
@@ -275,22 +314,23 @@ def describe_snapshot(snapshot: dict[str, Any]) -> str:
     # "415.8 GB (72% used)" reported it back as "72% free space" — an inversion
     # that turns a nearly-full disk into a healthy one. Spelling out both halves
     # leaves nothing to infer.
-    lines += [
+    sections["cpu"].append(
         f"CPU load: {snapshot['cpu_percent']:.0f}% of capacity in use, "
-        f"across {snapshot['cpu_count']} cores",
-        (
-            f"Memory: {memory['total_gb']:.2f} GB total, "
-            # Derived when absent: a missing key must not take the whole report
-            # down over a number we can work out (rule 10).
-            f"{memory.get('used_gb', memory['total_gb'] - memory['available_gb']):.2f}"
-            " GB in use, "
-            f"{memory['available_gb']:.2f} GB still free "
-            f"({memory['percent_used']:.0f}% of memory is in use)"
-        ),
-        f"Uptime: {snapshot['uptime_hours']:.1f} hours",
-    ]
+        f"across {snapshot['cpu_count']} cores"
+    )
+    sections["memory"].append(
+        f"Memory: {memory['total_gb']:.2f} GB total, "
+        # Derived when absent: a missing key must not take the whole report
+        # down over a number we can work out (rule 10).
+        f"{memory.get('used_gb', memory['total_gb'] - memory['available_gb']):.2f}"
+        " GB in use, "
+        f"{memory['available_gb']:.2f} GB still free "
+        f"({memory['percent_used']:.0f}% of memory is in use)"
+    )
     if snapshot["swap"]["total_gb"]:
-        lines.append(f"Swap: {snapshot['swap']['percent_used']:.0f}% used")
+        sections["memory"].append(f"Swap: {snapshot['swap']['percent_used']:.0f}% used")
+
+    sections["misc"].append(f"Uptime: {snapshot['uptime_hours']:.1f} hours")
     battery = snapshot.get("battery")
     if battery:
         state = "charging" if battery["plugged_in"] else "on battery"
@@ -298,16 +338,17 @@ def describe_snapshot(snapshot: dict[str, Any]) -> str:
             f", about {battery['minutes_left']} minutes left"
             if battery["minutes_left"] else ""
         )
-        lines.append(f"Battery: {battery['percent']}% ({state}{left})")
+        sections["misc"].append(f"Battery: {battery['percent']}% ({state}{left})")
+
     if snapshot["disks"]:
-        lines.append(
+        sections["disk"].append(
             f"Drives attached: {len(snapshot['disks'])} "
             f"({', '.join(d['mount'] for d in snapshot['disks'])}). "
             "There are no other drives on this machine."
         )
     for disk in snapshot["disks"]:
         used_gb = disk.get("used_gb", disk["total_gb"] - disk["free_gb"])
-        lines.append(
+        sections["disk"].append(
             f"Drive {disk['mount']}: {disk['total_gb']:.1f} GB total, "
             f"{used_gb:.1f} GB in use, "
             f"{disk['free_gb']:.1f} GB still free "
@@ -317,20 +358,33 @@ def describe_snapshot(snapshot: dict[str, Any]) -> str:
     # A small model will not infer "1.8GB free is tight" on its own, and this is
     # the whole question behind "why is my laptop slow?".
     if memory["percent_used"] >= 85:
-        lines.append(
+        sections["memory"].append(
             "NOTE: memory is nearly exhausted, which is the most likely cause of "
             "slowness on this machine."
         )
     if snapshot["cpu_percent"] >= 85:
-        lines.append("NOTE: CPU is saturated.")
-    for disk in snapshot["disks"]:
-        if disk["percent_used"] >= 90:
-            lines.append(f"NOTE: disk {disk['mount']} is nearly full.")
+        sections["cpu"].append(
+            "NOTE: the processor is saturated right now."
+        )
+
+    if focus in ("memory", "disk"):
+        wanted = [focus]
+    elif focus == "cpu":
+        wanted = ["hardware", "cpu"]
+    else:
+        wanted = ["hardware", "cpu", "memory", "misc", "disk"]
+
+    lines = [line for name in wanted for line in sections[name]]
     return "\n".join(lines)
 
 
-def describe_processes(procs: list[ProcessInfo], limit: int = 10) -> str:
-    lines = ["Top processes (percent of total CPU, resident memory):"]
+def describe_processes(
+    procs: list[ProcessInfo], limit: int = 10, sort_by: str = "cpu"
+) -> str:
+    # Say which way the list is ordered. Presented as a bare "top processes",
+    # a memory-ordered list reads as a CPU one and the model ranks it wrongly.
+    ordered = "largest first by memory" if sort_by == "memory" else "busiest first by CPU"
+    lines = [f"Top processes, {ordered} (percent of total CPU, resident memory):"]
     for rank, proc in enumerate(procs[:limit], 1):
         lines.append(
             f"#{rank}. {proc.name} (PID {proc.pid}) — "
@@ -344,6 +398,60 @@ def count_triggers(text: str, triggers) -> int:
     """How many distinct trigger phrases appear. The tie-break for the backstop."""
     lowered = text.lower()
     return sum(1 for trigger in triggers if trigger in lowered)
+
+
+# Two things a question can ask for beyond a single number. Both were learned
+# from the same session: "get me a detailed report on memory usage" and "list
+# top 5 things that are consuming my memory" came back as the identical one-line
+# total, because neither the depth nor the subject of the question reached the
+# tool.
+_DETAIL_PHRASES = (
+    "detailed", "in detail", "full report", "report on", "breakdown",
+    "break down", "comprehensive", "in depth", "in-depth", "everything",
+    "complete picture", "analysis", "analyse", "analyze", "elaborate",
+)
+
+# Deliberately generous, for the same asymmetry as the trigger lists: a false
+# positive costs one extra process sample, a miss answers the wrong question.
+_CONSUMPTION_PHRASES = (
+    "what is using", "what's using", "what is consuming", "what's consuming",
+    "consuming", "consume", "taking up", "taking my", "eating", "hogging",
+    "using the most", "using most", "most memory", "most ram", "most cpu",
+    "which process", "what process", "processes", "top 3", "top 5", "top 10",
+    "biggest", "worst offender", "what is running", "what's running",
+)
+
+
+_RESOURCE_WORDS = (
+    "memory", "ram", "cpu", "processor", "resource", "resources",
+    "performance", "slow", "sluggish",
+)
+
+
+def preferred_process_sort(text: str) -> str:
+    """Order the process list by whatever the question is about."""
+    lowered = text.lower()
+    memory = any(word in lowered for word in ("memory", "ram"))
+    cpu = any(word in lowered for word in ("cpu", "processor", "busy", "compute"))
+    return "memory" if memory and not cpu else "cpu"
+
+
+def asks_about_resources(text: str) -> bool:
+    """Is the question about memory or CPU, as opposed to disks or the OS?"""
+    lowered = text.lower()
+    return any(word in lowered for word in _RESOURCE_WORDS)
+
+
+def asks_for_detail(text: str) -> bool:
+    """Did the user ask for more than a one-line answer?"""
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _DETAIL_PHRASES)
+
+
+def asks_what_is_consuming(text: str) -> bool:
+    """Is the question about *what* is using the resources, not how much?"""
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _CONSUMPTION_PHRASES)
 
 
 # ── tools ────────────────────────────────────────────────────────
@@ -397,55 +505,125 @@ class SystemStatusTool(Tool):
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         snapshot = system_snapshot()
         memory = snapshot["memory"]
+        question = context.request_text
+        detailed = asks_for_detail(question)
+
+        # A totals reading cannot say *what* is using the memory, and answering
+        # a narrower question than the one asked is still a wrong answer: asked
+        # to "list top 5 things that are consuming my memory" this tool replied
+        # with the total, identical to the previous turn. So when the question
+        # is about what is responsible, the process table travels with the
+        # totals rather than the two tools competing to answer half of it.
+        # Also sampled for a detailed resource question, not only an explicit
+        # "what is using it". "Get me a detailed report on memory usage" was
+        # answered with three lines of totals: a detailed report on memory that
+        # cannot say what the memory went to is not a detailed report.
+        wants_processes = asks_what_is_consuming(question) or (
+            detailed and asks_about_resources(question)
+        )
+        order = preferred_process_sort(question)
+        processes = sample_processes(limit=10, sort_by=order) if wants_processes else []
+
+        # Narrowed to the area asked about, when there is exactly one. The
+        # model is not asked to filter; it is handed only what it needs.
+        focus = snapshot_focus(question)
+        reading = (
+            "Live reading of the user's machine, taken just now:\n"
+            + describe_snapshot(snapshot, focus)
+        )
+        if processes:
+            reading += "\n\n" + describe_processes(processes, 10, order)
+
+        rules = [
+            "Answer using ONLY these figures, and quote them exactly.",
+            "These readings replace any hardware or storage numbers stated "
+            "earlier in this conversation, including your own previous answers "
+            "— if an earlier reply disagrees with these, the earlier reply "
+            "was wrong.",
+            # The wording here was once "report the lines above and nothing
+            # else", added to stop the model apologising for data it had not
+            # been given. It overshot: asked "how much of my memory is in use?"
+            # the assistant recited the processor, the OS, the memory and every
+            # drive. Answering far more than was asked is its own wrong answer.
+            "Answer the question that was actually asked, and nothing more. A "
+            "question about one thing gets the lines about that one thing: "
+            "asked how much memory is in use, answer about memory and say "
+            "nothing about the processor, the operating system or the drives.",
+            "Give the full overview (processor and operating system first, then "
+            "memory and drives) only when the question is a general one about "
+            "the machine, which you can tell from the reading above: when it "
+            "covers one area only, that is the area asked about.",
+            "Whatever you quote, the reading is complete as it stands: never "
+            "invent a section, and never mention, apologise for, or draw "
+            "attention to anything not listed. Naming what you were not given "
+            "reads as a failure when nothing is missing.",
+        ]
+
+        if processes:
+            rules.append(
+                "This question asks what is responsible, so name the "
+                "processes listed above with their own figures. The totals "
+                "alone do not answer it. Keep them in the order given and copy "
+                "the numbers exactly: the list is already sorted for this "
+                "question, and re-ranking it turns a correct answer into a "
+                "wrong one."
+            )
+
+        # The closing line, and the one a 3B model follows most reliably, so
+        # depth and scope are decided here together. Split apart, whichever went
+        # last won and the other was silently dropped — moving the phrasing
+        # rule to the end once brought back uptime, swap and battery for a
+        # question about a single drive.
+        if detailed:
+            # Detail widens the answer, it does not unscope it. Without the
+            # second half here, "a detailed report on memory usage" came back
+            # with the processor, the OS and every drive: the model read
+            # "detailed" as "everything you have".
+            # Two earlier attempts at this line failed in opposite ways.
+            # "Give every figure that bears on what they asked" was read as
+            # "everything you have" and returned the processor, the OS and every
+            # drive. Adding "one per line, largest first" then made it strip the
+            # labels and sort numerically — "1. 7.43 GB / 2. 0.35 GB / 3. 96%",
+            # figures with nothing saying what they measured. What works is
+            # asking for the lines it was given, unchanged.
+            rules.append(
+                "To close: the user asked for detail, so reproduce the lines "
+                "above, each keeping its own label and its numbers exactly as "
+                "written. \"Memory: 7.78 GB total, 7.00 GB in use\" stays a "
+                "labelled line and never becomes a bare figure. Then list the "
+                "processes in the order given, without renumbering or "
+                "reordering them. Add nothing about parts of the machine the "
+                "question did not touch."
+            )
+        else:
+            # Both worked examples are here because it copies the shape it is
+            # shown: given only the memory one it phrased memory answers well
+            # and still answered about the drive with a bare "117.5 GB".
+            rules.append(
+                "To close: answer only what was asked, in one short sentence "
+                "that names the figure. Asked how much memory is in use, say "
+                "something like '93% of memory is in use, 0.57 GB still "
+                "free', and say nothing at all about the processor, the "
+                "drives, the uptime or the operating system. Asked how much "
+                "space is left on a drive, say something like 'C: has 117.5 GB "
+                "still free of 415.8 GB'."
+            )
+
+        display = (
+            f"system: {snapshot['cpu_percent']:.0f}% CPU "
+            + chr(0xB7)
+            + f" {memory['available_gb']:.2f} GB free of "
+            f"{memory['total_gb']:.2f} GB"
+        )
+        if processes:
+            display += " " + chr(0xB7) + f" {len(processes)} processes sampled"
+
         return ToolResult(
             ok=True,
-            content=(
-                "Live reading of the user's machine, taken just now:\n"
-                f"{describe_snapshot(snapshot)}\n\n"
-                "Answer using ONLY these figures, and quote them exactly.\n"
-                "These readings replace any hardware or storage numbers stated "
-                "earlier in this conversation, including your own previous "
-                "answers — if an earlier reply disagrees with these, the earlier "
-                "reply was wrong.\n"
-                # The previous wording here was "report the lines above and
-                # nothing else", added to stop the model apologising for data it
-                # had not been given. It overshot: asked "how much of my memory
-                # is in use?" the assistant recited the processor, the OS, the
-                # memory and every drive. Answering far more than was asked is
-                # its own kind of wrong answer.
-                "Answer the question that was actually asked, and nothing more. "
-                "A question about one thing gets the lines about that one thing: "
-                "asked how much memory is in use, answer about memory and say "
-                "nothing about the processor, the operating system or the drives. "
-                "Repeating the whole reading buries the one figure the user wanted "
-                "among four they did not ask for.\n"
-                "Give the full overview (processor and operating system first, then "
-                "memory and drives) only when the question is a general one about "
-                "the machine.\n"
-                "Whatever you quote, the reading is complete as it stands: never "
-                "invent a section, and never mention, apologise for, or draw "
-                "attention to anything not listed. Naming what you were not given "
-                "reads as a failure when nothing is missing.\n\n"
-                # The closing line, and the one a 3B model follows most
-                # reliably. Both rules live here together on purpose: split
-                # apart, whichever went last won and the other was dropped.
-                # Both worked examples are here for the same reason: given only
-                # the memory one, it phrased memory answers properly and still
-                # answered a question about the drive with a bare "117.5 GB".
-                # It copies the shape it is shown, so it is shown both.
-                "To close: answer only what was asked, in one short sentence that "
-                "names the figure. Asked how much memory is in use, say something "
-                "like '93% of memory is in use, 0.57 GB still free', and say nothing "
-                "at all about the processor, the drives, the uptime or the "
-                "operating system. Asked how much space is left on a drive, say "
-                "something like 'C: has 117.5 GB still free of 415.8 GB'.\n"
-                f"User's question: {context.request_text}"
-            ),
-            display=(
-                f"system: {snapshot['cpu_percent']:.0f}% CPU · "
-                f"{memory['available_gb']:.2f} GB free of {memory['total_gb']:.2f} GB"
-            ),
-            meta=snapshot,
+            content=reading + "\n\n" + "\n".join(rules)
+            + "\n\n" + f"User's question: {question}",
+            display=display,
+            meta={**snapshot, "processes": [proc.__dict__ for proc in processes]},
         )
 
 
@@ -454,10 +632,20 @@ class TopProcessesTool(Tool):
     description = "List the processes using the most CPU and memory right now"
     risk = Risk.READ
 
+    # Widened after a real miss. "list top 5 things that are consuming my
+    # memory" matched none of these, so this tool never even became a
+    # candidate and the totals-only reading answered unopposed. For a read
+    # tool the failure modes are not symmetric: a false match costs one cheap
+    # process sample, a miss answers a different question than the one asked.
     _TRIGGERS = (
         "what is using", "what's using", "which process", "what process",
         "top processes", "running processes", "using my cpu", "using my memory",
         "using my ram", "eating my", "hogging", "task manager", "processes",
+        "consuming", "consume", "taking up", "taking my", "eating",
+        "using the most", "using most", "most memory", "most ram", "most cpu",
+        "top 3", "top 5", "top 10", "biggest", "worst offender",
+        "what is running", "what's running", "program", "programs", "app",
+        "apps", "application", "applications",
     )
 
     def schema(self) -> dict:
@@ -487,6 +675,13 @@ class TopProcessesTool(Tool):
         lowered = text.lower()
         return any(trigger in lowered for trigger in self._TRIGGERS)
 
+    # Without this the registry scores an unscored tool as 1 while
+    # system_status returns its trigger count, so the backstop preferred the
+    # totals reading on almost every resource question. Tools competing for the
+    # same questions have to be scored the same way.
+    def match_score(self, text: str) -> int:
+        return count_triggers(text, self._TRIGGERS)
+
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         try:
             limit = int(arguments.get("limit") or 10)
@@ -494,23 +689,39 @@ class TopProcessesTool(Tool):
             limit = 10
         limit = max(1, min(limit, 25))
 
-        procs = sample_processes(limit=limit)
+        order = preferred_process_sort(context.request_text)
+        procs = sample_processes(limit=limit, sort_by=order)
         if not procs:
             return ToolResult.failure(
                 "No process information was available. Tell the user plainly.",
                 display="no process data",
             )
 
+        # The totals travel with the list. "500 MB" means nothing without
+        # knowing whether the machine has 8 GB or 64 — and a question about
+        # what is consuming memory is usually also a question about how much
+        # is left.
+        memory = system_snapshot()["memory"]
+        totals = (
+            f"Machine totals for context: {memory['total_gb']:.2f} GB of memory, "
+            f"{memory['used_gb']:.2f} GB in use, "
+            f"{memory['available_gb']:.2f} GB still free "
+            f"({memory['percent_used']:.0f}% used)."
+        )
+
         return ToolResult(
             ok=True,
             content=(
-                f"{describe_processes(procs, limit)}\n\n"
-                "Answer using only this list. Quote real process names and "
-                "numbers. Do not suggest ending a process unless asked.\n\n"
+                f"{describe_processes(procs, limit, order)}\n\n{totals}\n\n"
+                "Answer using only these figures. The list is already "
+                "sorted for this question: keep the rows in the order given "
+                "and copy the names and numbers exactly, re-ranking nothing. "
+                "Give the user the number of entries they asked for. Do not "
+                "suggest ending a process unless asked.\n\n"
                 f"User's question: {context.request_text}"
             ),
             display=f"sampled {len(procs)} processes",
-            meta={"processes": [p.__dict__ for p in procs[:limit]]},
+            meta={"processes": [p.__dict__ for p in procs[:limit]], "memory": memory},
         )
 
 

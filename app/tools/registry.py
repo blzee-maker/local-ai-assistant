@@ -150,6 +150,14 @@ class ToolRegistry:
 
     @staticmethod
     def _score(tool: Tool, text: str) -> int:
+        """How well a tool matches, for the backstop's tie-break.
+
+        The fallback of 1 is a trap for any tool that competes with a scored
+        one: top_processes had no scorer, so it scored 1 against system_status'
+        trigger count and lost nearly every resource question to a reading that
+        holds no per-process data. A tool that shares questions with another
+        needs its own match_score, counted the same way.
+        """
         scorer = getattr(tool, "match_score", None)
         if callable(scorer):
             try:
