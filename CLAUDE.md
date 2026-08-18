@@ -151,7 +151,16 @@ These cost real debugging time. Do not rediscover them.
   two opens a visible console, CREATE_NO_WINDOW alone leaves the child tied to
   its launcher's console. Background children use DETACHED_PROCESS and write to
   a log file (`app/cli/startup.py`).
-- **`pythonw.exe` has no stdout.** Anything that prints dies instantly under it.
+- **A detached process has no console, so the next process it starts gets a
+  brand-new one.** Hiding the child is not enough. The venv's `python.exe` is a
+  redirector that re-launches the base interpreter, and that grandchild opened
+  a Windows Terminal window titled `...\.venv\Scripts\python.exe` — the flag
+  meant to hide the daemon was what created the window. Launch detached
+  children with `pythonw.exe`: a GUI-subsystem binary never allocates a
+  console, at any depth of the chain.
+- **`pythonw.exe` has no stdout of its own.** Anything that prints dies instantly
+  under it *unless* it is handed a real file handle — which a background process
+  needs regardless, since DEVNULL makes its crashes undiagnosable.
 - **Never identify a process by substring over its joined command line.** A
   match on "assistant.py" plus "daemon" hit the shell searching for daemons and
   killed it. Match the argument list.

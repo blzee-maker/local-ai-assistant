@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from app.cli.startup import (
+    _background_python,
     _detached_kwargs,
     _entry_script,
     consent_state,
@@ -24,11 +25,18 @@ from app.cli.startup import (
 
 ENTRY = str(_entry_script())
 PY = r"C:\Projects\local-ai-assistant\.venv\Scripts\python.exe"
+PYW = r"C:\Projects\local-ai-assistant\.venv\Scripts\pythonw.exe"
 
 
 # ── identifying our own daemon ───────────────────────────────────
 def test_the_real_daemon_is_recognised():
     assert is_daemon_cmdline([PY, ENTRY, "daemon", "run"], "python.exe")
+
+
+def test_a_daemon_started_with_pythonw_is_still_recognised():
+    """Background children run under pythonw, so `sleep` must know that shape
+    too — otherwise it reports no daemon while one is running."""
+    assert is_daemon_cmdline([PYW, ENTRY, "daemon", "run"], "pythonw.exe")
 
 
 def test_other_assistant_commands_are_not_daemons():
@@ -76,6 +84,21 @@ def test_background_children_are_detached_and_windowless():
     assert flags == subprocess.DETACHED_PROCESS
     assert not flags & subprocess.CREATE_NO_WINDOW
     assert not flags & subprocess.CREATE_NEW_CONSOLE
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows console model")
+def test_background_interpreter_cannot_allocate_a_console():
+    r"""The window `wake` opened was never the daemon's own console.
+
+    DETACHED_PROCESS leaves a process with no console, so the console app it
+    starts next gets a brand-new one — and the venv's python.exe always starts
+    one, being a redirector for the base interpreter. The visible window was
+    that grandchild's, titled `...\.venv\Scripts\python.exe`. Only a
+    GUI-subsystem interpreter keeps the whole chain quiet.
+    """
+    chosen = Path(_background_python())
+    assert chosen.is_file()
+    assert chosen.stem.lower() == "pythonw"
 
 
 def test_daemon_output_goes_to_a_file_not_devnull():

@@ -112,10 +112,36 @@ def _detached_kwargs() -> dict:
 # the daemon was crashing instantly on startup and simply appeared not to run.
 DAEMON_LOG = Path(settings.upload_dir).parent / "daemon.log"
 
-# pythonw.exe was tried here and is wrong. It has no stdout at all, so the
-# scheduler's first status line raised and killed the daemon on launch, with the
-# traceback going to DEVNULL. CREATE_NO_WINDOW on the ordinary interpreter
-# hides the console on its own.
+
+def _background_python() -> str:
+    r"""The interpreter to launch detached children with: pythonw.exe if present.
+
+    DETACHED_PROCESS alone is not enough, and the thing it misses is a
+    *grandchild*. A detached process has no console at all, so when it starts a
+    console application with default flags Windows allocates a **fresh** one —
+    which on Windows 11 means a new Windows Terminal window. The virtualenv's
+    python.exe is exactly such a starter: it is a redirector that re-launches
+    the base interpreter. So `wake` opened a window titled
+    `...\.venv\Scripts\python.exe` that nobody asked for, and the flag meant to
+    hide the daemon was what created it.
+
+    pythonw.exe is a GUI-subsystem binary: it never allocates a console, and
+    neither does the base pythonw.exe its own redirector goes on to start. The
+    whole chain stays invisible however many links it has.
+
+    pythonw was tried once before and rejected for a reason that no longer
+    holds: having no stdout of its own, the scheduler's first status line killed
+    the daemon on launch. That was fatal only because output went to DEVNULL.
+    Handed a real file (DAEMON_LOG) its stdout is valid and it runs normally —
+    which is a second reason not to discard a background process's output.
+
+    CREATE_NO_WINDOW on the ordinary interpreter also hides the window and was
+    measured to work, but it is not used: it keeps the child inside console-land
+    where survival depends on which console it ended up attached to, and it was
+    already seen dying with its launcher once.
+    """
+    candidate = Path(sys.executable).with_name("pythonw.exe")
+    return str(candidate) if candidate.is_file() else sys.executable
 
 
 def ensure_ollama(timeout: float = OLLAMA_START_TIMEOUT) -> StepResult:
@@ -276,7 +302,7 @@ def ensure_daemon() -> StepResult:
 
     try:
         process = subprocess.Popen(
-            [sys.executable, str(entry), "daemon", "run"],
+            [_background_python(), str(entry), "daemon", "run"],
             stdout=log or subprocess.DEVNULL,
             stderr=subprocess.STDOUT if log else subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
