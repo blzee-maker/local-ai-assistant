@@ -12,6 +12,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.knownfolders import user_folders
 
+# Everything the assistant stores lives under here, whatever directory it was
+# launched from. See Settings.model_post_init.
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 
 def _default_file_dirs() -> list[str]:
     """Folders the app is allowed to browse/ingest from (only existing ones matter).
@@ -88,6 +92,33 @@ class Settings(BaseSettings):
     allowed_file_dirs: list[str] = Field(default_factory=_default_file_dirs)
     file_search_max_results: int = 25
     file_search_scan_limit: int = 20000  # cap files walked so a huge folder can't stall
+
+    def model_post_init(self, _context: object) -> None:
+        """Anchor every data and model path to the project, not the shell's cwd.
+
+        These defaults are written relative ("data/vector_store") because that
+        reads well, but a relative path resolves against whatever directory the
+        process happens to start in. That was invisible while the assistant was
+        only ever launched from its own folder — and broke the moment it became
+        reachable from anywhere: run from C:\\Users\\Om and it looked for
+        C:\\Users\\Om\\data\\consent.json, found nothing, and reported that file
+        access had never been approved. Memory, the audit ledger, the vector
+        store and the daemon journal would all have silently forked per
+        directory the same way.
+
+        An absolute path set by the user is honoured as-is; only relative ones
+        are anchored.
+        """
+        for field in (
+            "embedding_cache_dir",
+            "vector_store_dir",
+            "upload_dir",
+            "whisper_cache_dir",
+            "piper_voice_path",
+        ):
+            value = Path(getattr(self, field))
+            if not value.is_absolute():
+                object.__setattr__(self, field, str((PROJECT_ROOT / value).resolve()))
 
 
 settings = Settings()

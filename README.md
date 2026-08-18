@@ -137,8 +137,18 @@ Every step is idempotent — waking an already-awake assistant is a no-op, not a
 second copy of everything. `sleep buddy` stops the daemon; the model server is
 left alone, since other things on the machine may be using it.
 
-Install it once with `scripts/install_shell.ps1`, which adds `wake`, `buddy` and
-an `ai` alias to your PowerShell profile between marked lines you can delete.
+Install it once with `scripts/install_shell.ps1`. It sets the command up for
+**both shells**, because they do not share anything:
+
+- **PowerShell** gets `wake`, `buddy` and an `ai` alias in your profile, between
+  marked lines you can delete.
+- **Command Prompt** gets `bin\` added to your user PATH, where `wake.cmd`,
+  `buddy.cmd`, `sleep-buddy.cmd` and `ai.cmd` live. cmd.exe has no idea the
+  PowerShell profile exists, so a profile-only install fails there with
+  `'wake' is not recognized`.
+
+Either way, open a **new** terminal afterwards — neither PATH nor profile
+changes reach shells that are already running.
 
 ### The individual commands
 

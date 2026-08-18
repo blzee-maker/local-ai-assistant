@@ -141,6 +141,11 @@ These cost real debugging time. Do not rediscover them.
   thread and using it from a worker raises "SQLite objects created in a thread
   can only be used in that same thread". Open the connection *in* the thread
   that will use it (see `app/daemon/watcher.py`).
+- **Relative paths follow the shell, not the project.** Data locations are
+  anchored to `PROJECT_ROOT` in `config.py`; a relative default silently gives
+  every working directory its own empty `data/` folder.
+- **cmd.exe cannot see PowerShell profile functions.** Shipping a command means
+  both a profile function *and* a `.cmd` shim on PATH (`bin/`).
 - **Memory is genuinely tight** (~7.8GB total, often <1GB free). Ollama returns
   HTTP 5xx when a model cannot load. That is what the fallback model is for.
 

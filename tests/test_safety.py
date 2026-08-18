@@ -150,3 +150,38 @@ def test_analyzer_opens_files_read_only():
                         offenders.append(f"{py.name}:{node.lineno} open({arg.value!r})")
 
     assert not offenders, f"non-read opens in analyzer: {offenders}"
+
+
+# ── data location ────────────────────────────────────────────────
+def test_data_paths_do_not_depend_on_the_working_directory():
+    r"""Regression: every data path was relative, so launching from anywhere but
+    the project folder silently used a different (empty) data directory.
+
+    Running `wake` from C:\Users\Om looked for C:\Users\Om\data\consent.json,
+    found nothing, and reported that file access had never been approved. Memory,
+    the audit ledger and the vector store would each have forked per directory
+    the same way.
+    """
+    from config import PROJECT_ROOT, settings
+
+    for value in (
+        settings.vector_store_dir,
+        settings.upload_dir,
+        settings.embedding_cache_dir,
+        settings.whisper_cache_dir,
+        settings.piper_voice_path,
+    ):
+        path = Path(value)
+        assert path.is_absolute(), f"{value} is relative to the shell's cwd"
+        assert PROJECT_ROOT in path.parents or path == PROJECT_ROOT
+
+
+def test_stateful_modules_use_absolute_paths():
+    """The derived paths in each subsystem inherit the anchoring."""
+    from app import consent
+    from app.daemon.journal import JOURNAL_PATH
+    from app.memory.store import MEMORY_PATH
+    from app.tools.ledger import LEDGER_PATH
+
+    for path in (consent.CONSENT_PATH, JOURNAL_PATH, MEMORY_PATH, LEDGER_PATH):
+        assert Path(path).is_absolute(), f"{path} would move with the cwd"
