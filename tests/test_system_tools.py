@@ -420,3 +420,61 @@ def test_system_status_outscores_disk_report_on_a_hardware_question():
 
     question = "Give me my system information: CPU, memory and disks."
     assert SystemStatusTool().match_score(question) > DiskReportTool().match_score(question)
+
+
+# ── resisting the model's own earlier fabrications ───────────────
+def test_grounding_overrides_earlier_conversation():
+    """A model that fabricated once will copy itself when asked to "redo" it.
+
+    The user's own transcript is in context, so a wrong answer from before a fix
+    is a source the model happily reuses. The tool result has to say outright
+    that it supersedes anything stated earlier.
+    """
+    content = SystemStatusTool().run({}, ctx("redo the system analysis")).content
+    lowered = content.lower()
+    assert "replace any hardware or storage numbers stated earlier" in lowered
+    assert "your own previous answers" in lowered
+
+
+def test_grounding_forbids_inventing_absent_sections():
+    """It reported active connections and download speeds from a tool that
+    collects no network data at all."""
+    content = SystemStatusTool().run({}, ctx("full system analysis")).content
+    assert "no network" in content.lower()
+    assert "do not add any section" in content.lower()
+
+
+def test_figures_state_which_way_round_they_run():
+    """Given "415.8 GB (72% used)" the model reported "72% free space" — an
+    inversion that turns a nearly-full disk into a healthy one. Every figure now
+    names both halves explicitly."""
+    from app.tools.system import describe_snapshot, system_snapshot
+
+    text = describe_snapshot(system_snapshot())
+    assert "in use" in text
+    assert "still free" in text
+    # The bare, invertible phrasing must be gone.
+    assert "% used)" not in text
+
+
+def test_drive_count_is_stated_explicitly():
+    """It invented D: and E: drives. Saying how many exist closes that door."""
+    from app.tools.system import describe_snapshot, system_snapshot
+
+    snapshot = system_snapshot()
+    text = describe_snapshot(snapshot)
+    if snapshot["disks"]:
+        assert "no other drives" in text.lower()
+        assert f"Drives attached: {len(snapshot['disks'])}" in text
+
+
+def test_snapshot_reports_used_alongside_free():
+    from app.tools.system import system_snapshot
+
+    snapshot = system_snapshot()
+    assert "used_gb" in snapshot["memory"]
+    total = snapshot["memory"]["total_gb"]
+    parts = snapshot["memory"]["used_gb"] + snapshot["memory"]["available_gb"]
+    assert abs(total - parts) < 0.05, "used + free should account for total"
+    for disk in snapshot["disks"]:
+        assert "used_gb" in disk

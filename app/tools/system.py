@@ -226,6 +226,7 @@ def system_snapshot() -> dict[str, Any]:
                 "mount": part.mountpoint,
                 "total_gb": round(usage.total / BYTES_GB, 1),
                 "free_gb": round(usage.free / BYTES_GB, 1),
+                "used_gb": round(usage.used / BYTES_GB, 1),
                 "percent_used": usage.percent,
             }
         )
@@ -237,6 +238,7 @@ def system_snapshot() -> dict[str, Any]:
         "memory": {
             "total_gb": round(memory.total / BYTES_GB, 2),
             "available_gb": round(memory.available / BYTES_GB, 2),
+            "used_gb": round((memory.total - memory.available) / BYTES_GB, 2),
             "percent_used": memory.percent,
         },
         "swap": {
@@ -269,11 +271,21 @@ def describe_snapshot(snapshot: dict[str, Any]) -> str:
             f"({hardware.get('architecture', '')})".strip()
         )
 
+    # Every figure is labelled with which way round it runs. A 3B model given
+    # "415.8 GB (72% used)" reported it back as "72% free space" — an inversion
+    # that turns a nearly-full disk into a healthy one. Spelling out both halves
+    # leaves nothing to infer.
     lines += [
-        f"CPU load: {snapshot['cpu_percent']:.0f}% across {snapshot['cpu_count']} cores",
+        f"CPU load: {snapshot['cpu_percent']:.0f}% of capacity in use, "
+        f"across {snapshot['cpu_count']} cores",
         (
-            f"Memory: {memory['available_gb']:.2f} GB free of "
-            f"{memory['total_gb']:.2f} GB ({memory['percent_used']:.0f}% used)"
+            f"Memory: {memory['total_gb']:.2f} GB total, "
+            # Derived when absent: a missing key must not take the whole report
+            # down over a number we can work out (rule 10).
+            f"{memory.get('used_gb', memory['total_gb'] - memory['available_gb']):.2f}"
+            " GB in use, "
+            f"{memory['available_gb']:.2f} GB still free "
+            f"({memory['percent_used']:.0f}% of memory is in use)"
         ),
         f"Uptime: {snapshot['uptime_hours']:.1f} hours",
     ]
@@ -287,10 +299,19 @@ def describe_snapshot(snapshot: dict[str, Any]) -> str:
             if battery["minutes_left"] else ""
         )
         lines.append(f"Battery: {battery['percent']}% ({state}{left})")
-    for disk in snapshot["disks"]:
+    if snapshot["disks"]:
         lines.append(
-            f"Disk {disk['mount']}: {disk['free_gb']:.1f} GB free of "
-            f"{disk['total_gb']:.1f} GB ({disk['percent_used']:.0f}% used)"
+            f"Drives attached: {len(snapshot['disks'])} "
+            f"({', '.join(d['mount'] for d in snapshot['disks'])}). "
+            "There are no other drives on this machine."
+        )
+    for disk in snapshot["disks"]:
+        used_gb = disk.get("used_gb", disk["total_gb"] - disk["free_gb"])
+        lines.append(
+            f"Drive {disk['mount']}: {disk['total_gb']:.1f} GB total, "
+            f"{used_gb:.1f} GB in use, "
+            f"{disk['free_gb']:.1f} GB still free "
+            f"({disk['percent_used']:.0f}% of the drive is in use)"
         )
 
     # A small model will not infer "1.8GB free is tight" on its own, and this is
@@ -385,9 +406,16 @@ class SystemStatusTool(Tool):
         return ToolResult(
             ok=True,
             content=(
-                "Current state of the user's machine:\n"
+                "Live reading of the user's machine, taken just now:\n"
                 f"{describe_snapshot(snapshot)}\n\n"
-                "Answer using only these figures. Quote real numbers.\n\n"
+                "Answer using ONLY these figures, and quote them exactly.\n"
+                "These readings replace any hardware or storage numbers stated "
+                "earlier in this conversation, including your own previous "
+                "answers — if an earlier reply disagrees with these, the earlier "
+                "reply was wrong.\n"
+                "Do not add any section that is not covered above. There is no "
+                "network, GPU or temperature data available, so do not report "
+                "any.\n\n"
                 f"User's question: {context.request_text}"
             ),
             display=(
