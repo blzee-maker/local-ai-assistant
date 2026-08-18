@@ -116,6 +116,17 @@ class Tool(Protocol):
         """
         ...
 
+    def match_score(self, text: str) -> int:
+        """How strongly this message points at me. Higher wins a tie.
+
+        Used only when several tools match and the model declines to choose.
+        Counting how much of what the user actually said belongs to this tool is
+        a better tie-break than registration order: "give me my system
+        information: CPU, memory and disks" matches both the system reporter and
+        the disk reporter, but overwhelmingly the former.
+        """
+        ...
+
     def run(self, arguments: dict, context: "ToolContext") -> ToolResult:
         """Execute. Must not raise for expected failures — return a ToolResult
         carrying a correction so the model can be honest about what happened."""

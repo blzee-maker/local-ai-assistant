@@ -130,13 +130,41 @@ def test_backstop_fires_when_tool_calling_is_unsupported(ledger):
     assert invocation.source == "backstop"
 
 
-def test_backstop_declines_rather_than_guessing_between_tools(ledger):
-    """Ambiguity must not be resolved by picking one. Guessing wrong is worse
-    than doing nothing, and the model already declined to choose."""
-    registry = ToolRegistry(ledger)
-    registry.register_all([FakeTool("files", "find"), FakeTool("disk", "find")])
+def test_backstop_picks_the_best_match_among_read_tools(ledger):
+    """Declining whenever two tools matched sounded prudent and was wrong.
 
-    assert registry.select("find something", FakeEngine(None)) is None
+    Asked "give me my system information: CPU, memory and disks", both the
+    system and disk reporters matched, the 3B model chose neither, and the user
+    got no data at all — which is how a question about their hardware ended up
+    answered from imagination. For read-only tools, running the better match
+    costs a cheap local call; running nothing costs the answer.
+    """
+    class ScoredTool(FakeTool):
+        def __init__(self, name, keyword, score):
+            super().__init__(name, keyword)
+            self._score = score
+
+        def match_score(self, text: str) -> int:
+            return self._score
+
+    registry = ToolRegistry(ledger)
+    registry.register_all([ScoredTool("weak", "find", 1), ScoredTool("strong", "find", 4)])
+
+    invocation = registry.select("find something", FakeEngine(None))
+    assert invocation is not None
+    assert invocation.tool == "strong"
+    assert invocation.source == "backstop"
+
+
+def test_backstop_is_deterministic_on_a_tie(ledger):
+    """Equal scores must not resolve differently run to run."""
+    registry = ToolRegistry(ledger)
+    registry.register_all([FakeTool("first", "find"), FakeTool("second", "find")])
+
+    picks = {
+        registry.select("find something", FakeEngine(None)).tool for _ in range(5)
+    }
+    assert picks == {"first"}
 
 
 def test_excluded_tools_are_not_offered(ledger):

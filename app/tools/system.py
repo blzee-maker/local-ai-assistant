@@ -137,6 +137,63 @@ def sample_processes(interval: float = 0.4, limit: int | None = None) -> list[Pr
     return results[:limit] if limit else results
 
 
+def cpu_name() -> str:
+    """A human-recognisable processor name.
+
+    `platform.processor()` returns something like "Intel64 Family 6 Model 140"
+    on Windows — technically correct and useless to a person asking what CPU
+    they have. The registry holds the marketing name the machine was sold under,
+    which is what they mean.
+    """
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            )
+            with key:
+                value, _type = winreg.QueryValueEx(key, "ProcessorNameString")
+            if value:
+                return " ".join(str(value).split())
+        except Exception:
+            pass
+
+    import platform
+
+    return platform.processor() or platform.machine() or "unknown"
+
+
+def hardware_info() -> dict[str, Any]:
+    """Static facts about the machine — the things "what are my specs?" means."""
+    import platform
+
+    psutil = _psutil()
+    uname = platform.uname()
+
+    frequency = None
+    try:
+        freq = psutil.cpu_freq()
+        if freq and freq.max:
+            frequency = round(freq.max / 1000.0, 2)
+        elif freq and freq.current:
+            frequency = round(freq.current / 1000.0, 2)
+    except Exception:
+        frequency = None
+
+    return {
+        "cpu_name": cpu_name(),
+        "cpu_cores_physical": psutil.cpu_count(logical=False),
+        "cpu_cores_logical": psutil.cpu_count(logical=True),
+        "cpu_max_ghz": frequency,
+        "os": f"{uname.system} {uname.release}",
+        "os_version": uname.version,
+        "architecture": uname.machine,
+        "hostname": uname.node,
+    }
+
+
 def system_snapshot() -> dict[str, Any]:
     """Everything the status tool reports, in one structure."""
     psutil = _psutil()
@@ -174,6 +231,7 @@ def system_snapshot() -> dict[str, Any]:
         )
 
     return {
+        "hardware": hardware_info(),
         "cpu_percent": psutil.cpu_percent(interval=0.3),
         "cpu_count": psutil.cpu_count(),
         "memory": {
@@ -194,8 +252,25 @@ def system_snapshot() -> dict[str, Any]:
 def describe_snapshot(snapshot: dict[str, Any]) -> str:
     """Snapshot as prose the model can answer from."""
     memory = snapshot["memory"]
-    lines = [
-        f"CPU: {snapshot['cpu_percent']:.0f}% across {snapshot['cpu_count']} cores",
+    hardware = snapshot.get("hardware") or {}
+    lines = []
+
+    if hardware:
+        cores = hardware.get("cpu_cores_physical")
+        threads = hardware.get("cpu_cores_logical")
+        speed = hardware.get("cpu_max_ghz")
+        cpu_line = f"Processor: {hardware.get('cpu_name', 'unknown')}"
+        if cores or threads:
+            cpu_line += f" ({cores or '?'} cores / {threads or '?'} threads"
+            cpu_line += f", up to {speed} GHz)" if speed else ")"
+        lines.append(cpu_line)
+        lines.append(
+            f"Operating system: {hardware.get('os', 'unknown')} "
+            f"({hardware.get('architecture', '')})".strip()
+        )
+
+    lines += [
+        f"CPU load: {snapshot['cpu_percent']:.0f}% across {snapshot['cpu_count']} cores",
         (
             f"Memory: {memory['available_gb']:.2f} GB free of "
             f"{memory['total_gb']:.2f} GB ({memory['percent_used']:.0f}% used)"
@@ -243,17 +318,38 @@ def describe_processes(procs: list[ProcessInfo], limit: int = 10) -> str:
     return "\n".join(lines)
 
 
+
+def count_triggers(text: str, triggers) -> int:
+    """How many distinct trigger phrases appear. The tie-break for the backstop."""
+    lowered = text.lower()
+    return sum(1 for trigger in triggers if trigger in lowered)
+
+
 # ── tools ────────────────────────────────────────────────────────
 class SystemStatusTool(Tool):
     name = "system_status"
     description = "Report CPU, memory, disk, battery, and uptime for this machine"
     risk = Risk.READ
 
+    # Deliberately generous. For a read-only tool the two failure modes are not
+    # remotely symmetric: a false match costs one cheap local call, while a
+    # missed match means the model answers from imagination — which it does
+    # confidently. Asked "give me my system information" with a narrower list,
+    # it invented 16 GB of RAM and three hard drives on a machine with 7.8 GB
+    # and one. Keyword pre-filters exist to save cost, never at the price of
+    # correctness (CLAUDE.md conventions).
     _TRIGGERS = (
-        "cpu", "memory", "ram", "battery", "uptime", "system status",
-        "how is my machine", "how's my machine", "slow", "sluggish", "freezing",
-        "hot", "overheating", "resources", "performance", "disk space",
-        "free space", "how much space",
+        # the machine itself
+        "system", "machine", "computer", "laptop", "desktop pc", "my pc",
+        "this pc", "hardware", "spec", "specs", "specification", "configuration",
+        # components
+        "cpu", "processor", "core", "ghz", "memory", "ram", "gb of",
+        "disk", "drive", "drives", "storage", "ssd", "hard drive",
+        "battery", "power", "uptime", "operating system", "windows version",
+        # symptoms
+        "slow", "sluggish", "freezing", "lagging", "hot", "overheating",
+        "resources", "performance", "free space", "how much space",
+        "running out of space",
     )
 
     def schema(self) -> dict:
@@ -273,6 +369,15 @@ class SystemStatusTool(Tool):
     def matches(self, text: str) -> bool:
         lowered = text.lower()
         return any(trigger in lowered for trigger in self._TRIGGERS)
+
+    def match_score(self, text: str) -> int:
+        return count_triggers(text, self._TRIGGERS)
+
+    def match_score(self, text: str) -> int:
+        return count_triggers(text, self._TRIGGERS)
+
+    def match_score(self, text: str) -> int:
+        return count_triggers(text, self._TRIGGERS)
 
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         snapshot = system_snapshot()

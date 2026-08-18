@@ -127,11 +127,36 @@ class ToolRegistry:
             # to the backstop rather than failing the whole turn.
             pass
 
-        # Backstop: only when the match is unambiguous, and never for something
-        # that could destroy data on a keyword's say-so.
-        if len(candidates) == 1 and candidates[0].risk is not Risk.DESTRUCTIVE:
-            return ToolInvocation(tool=candidates[0].name, arguments={}, source="backstop")
-        return None
+        # Backstop, for when the model emits no tool call at all — which a 3B
+        # model does often, including on questions it obviously should answer
+        # with a tool.
+        #
+        # Destructive tools are never chosen this way: a keyword match cannot
+        # authorise something irreversible.
+        #
+        # Among read/write candidates, the best match wins rather than the
+        # request being abandoned. An earlier version declined whenever more
+        # than one tool matched, which sounded prudent and was wrong: asked
+        # "give me my system information: CPU, memory and disks" both the system
+        # and disk reporters matched, the model chose neither, and the user got
+        # no data at all. Running the better-matching read-only tool costs a
+        # cheap local call; running nothing costs the answer.
+        safe = [tool for tool in candidates if tool.risk is not Risk.DESTRUCTIVE]
+        if not safe:
+            return None
+
+        best = max(safe, key=lambda tool: (self._score(tool, text), -safe.index(tool)))
+        return ToolInvocation(tool=best.name, arguments={}, source="backstop")
+
+    @staticmethod
+    def _score(tool: Tool, text: str) -> int:
+        scorer = getattr(tool, "match_score", None)
+        if callable(scorer):
+            try:
+                return int(scorer(text))
+            except Exception:
+                pass
+        return 1
 
     # ── execution ────────────────────────────────────────────────
     def invoke(self, invocation: ToolInvocation, context: ToolContext) -> ToolResult:

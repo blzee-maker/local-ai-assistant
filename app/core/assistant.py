@@ -38,8 +38,21 @@ DEFAULT_SYSTEM_PROMPT = (
     "the user's own machine. You can read their documents, analyse their disk, "
     "report on system health, end processes they ask you to, and remember "
     "things they tell you to remember. Be direct and accurate. If you are "
-    "unsure, say so. Never claim you lack a capability you actually have."
+    "unsure, say so. Never claim you lack a capability you actually have.\n\n"
+    "CRITICAL: never invent facts about this computer or its files. Specific "
+    "figures — RAM, CPU model, disk sizes, drive letters, file names, "
+    "process names — are only ever reported when they appear in tool results "
+    "provided to you in this conversation. If you have not been given them, "
+    "say you need to check and ask the user to run the relevant command. A "
+    "plausible guess about their hardware is worse than no answer, because "
+    "they cannot tell it apart from a real reading."
 )
+
+# The keyword gates in front of the tools are a cost optimisation and will never
+# cover every phrasing. This instruction is the backstop for the times they miss:
+# asked "give me my system information" before the gate was widened, the model
+# confidently reported 16 GB of RAM and three hard drives on a machine with
+# 7.8 GB and one.
 
 
 def system_prompt() -> str:

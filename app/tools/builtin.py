@@ -34,6 +34,10 @@ class OpenLocalFileTool(Tool):
             return False
         return fileintent.looks_like_file_request(text)
 
+    def match_score(self, text: str) -> int:
+        lowered = text.lower()
+        return sum(1 for noun in fileintent._FILE_NOUNS if noun in lowered)
+
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         from app import files as filesvc
 
@@ -139,6 +143,12 @@ class DiskReportTool(Tool):
     def matches(self, text: str) -> bool:
         return diskintent.looks_like_disk_question(text)
 
+    def match_score(self, text: str) -> int:
+        lowered = text.lower()
+        return sum(
+            1 for word in diskintent._DISK_VERBS if word in lowered
+        )
+
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         grounded, note = diskintent.ground_prompt(context.request_text)
         if grounded is None:
@@ -206,6 +216,10 @@ class RememberTool(Tool):
     def matches(self, text: str) -> bool:
         lowered = text.lower()
         return any(trigger in lowered for trigger in self._TRIGGERS)
+
+    def match_score(self, text: str) -> int:
+        lowered = text.lower()
+        return sum(1 for trigger in self._TRIGGERS if trigger in lowered)
 
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         fact = str(arguments.get("fact") or "").strip()

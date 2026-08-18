@@ -160,6 +160,14 @@ These cost real debugging time. Do not rediscover them.
 - Keyword pre-filters are for *cost*, not correctness: they exist so ordinary
   chat doesn't pay for tool selection. They must never be the only thing
   deciding whether a destructive action runs.
+- For a *read* tool, be generous with those keywords. The failure modes are not
+  symmetric: a false match costs one cheap local call, while a missed match
+  means the model answers from imagination — asked "give me my system
+  information" it reported 16GB of RAM and three drives on a machine with 7.8GB
+  and one. And when several read tools match but the model picks none, run the
+  best-scoring one rather than nothing.
+- The prompt must forbid inventing machine or file facts outright. No keyword
+  list will ever be complete, so that instruction is the real backstop.
 - Never infer and store facts about the user in the background. Memory is
   written when they ask for it, shown when it is used, and genuinely deleted
   when they forget it.

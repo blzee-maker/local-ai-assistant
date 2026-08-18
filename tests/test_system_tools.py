@@ -345,3 +345,78 @@ def test_kill_phrasing_does_not_trip_the_read_tools():
     assert EndProcessTool().matches("kill chrome")
     assert EndProcessTool().matches("force quit spotify")
     assert not EndProcessTool().matches("what is using my memory")
+
+
+# ── the fabrication bug ──────────────────────────────────────────
+NATURAL_SYSTEM_QUESTIONS = [
+    "give me my system information",
+    "what are my PC specs?",
+    "tell me about my computer",
+    "system info",
+    "what hardware do I have",
+    "how much RAM do I have",
+    "what processor is this",
+    "show me my drives",
+    "how big is my hard drive",
+    "is my laptop powerful",
+    "what are the specifications of this machine",
+    "why is my laptop slow?",
+    "how much free space is left",
+    "what is my operating system",
+]
+
+
+@pytest.mark.parametrize("question", NATURAL_SYSTEM_QUESTIONS)
+def test_natural_phrasings_reach_a_system_tool(question):
+    """The gate missing a phrasing is not a missed feature, it is a lie.
+
+    With a narrower trigger list, "give me my system information" matched
+    nothing, so the model answered from imagination: 16 GB of RAM and three
+    hard drives on a machine with 7.8 GB and one. For a read-only tool a false
+    match costs one cheap local call, so the list is deliberately generous.
+    """
+    assert SystemStatusTool().matches(question) or TopProcessesTool().matches(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "write me a poem about rain",
+        "what is the capital of Peru",
+        "summarise this document",
+        "who wrote Hamlet",
+        "translate this to French",
+    ],
+)
+def test_ordinary_chat_still_costs_no_tool_call(question):
+    """Generous must not mean indiscriminate — rule 9 still applies."""
+    assert not SystemStatusTool().matches(question)
+    assert not TopProcessesTool().matches(question)
+
+
+def test_hardware_info_reports_real_values():
+    """The snapshot had no CPU model at all, so even a correctly-routed
+    question could only answer "[Unknown, unable to determine]"."""
+    from app.tools.system import hardware_info
+
+    info = hardware_info()
+    assert info["cpu_name"] and info["cpu_name"] != "unknown"
+    assert (info["cpu_cores_logical"] or 0) >= 1
+    assert info["os"]
+    assert info["architecture"]
+
+
+def test_description_includes_the_processor_and_os():
+    from app.tools.system import describe_snapshot, system_snapshot
+
+    text = describe_snapshot(system_snapshot())
+    assert "Processor:" in text
+    assert "Operating system:" in text
+
+
+def test_system_status_outscores_disk_report_on_a_hardware_question():
+    """The tie-break that decides which tool the backstop runs."""
+    from app.tools.builtin import DiskReportTool
+
+    question = "Give me my system information: CPU, memory and disks."
+    assert SystemStatusTool().match_score(question) > DiskReportTool().match_score(question)
