@@ -116,6 +116,17 @@ class MemoryService:
             return []
         return self._store.messages(self._session_id, limit=limit)
 
+    def previous_messages(self, limit: int = 20) -> list[StoredMessage]:
+        """The conversation before this one.
+
+        Resuming is opt-in, so by the time someone asks for it a fresh session
+        is already under way and `history` would return that empty session.
+        """
+        earlier = self._store.latest_session(exclude=self._session_id)
+        if earlier is None:
+            return []
+        return self._store.messages(earlier, limit=limit)
+
     def sessions(self, limit: int = 20) -> list[SessionInfo]:
         return self._store.sessions(limit)
 

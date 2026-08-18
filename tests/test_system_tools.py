@@ -440,7 +440,7 @@ def test_grounding_forbids_inventing_absent_sections():
     """It reported active connections and download speeds from a tool that
     collects no network data at all."""
     content = SystemStatusTool().run({}, ctx("full system analysis")).content
-    assert "do not invent extra sections" in content.lower()
+    assert "never invent a section" in content.lower()
 
 
 def test_grounding_does_not_invite_an_apology():
@@ -448,8 +448,23 @@ def test_grounding_does_not_invite_an_apology():
     comprehensive analysis due to the lack of network, GPU and temperature
     data" — turning a complete reading into an apology."""
     content = SystemStatusTool().run({}, ctx("system analysis")).content.lower()
-    assert "do not mention, apologise for" in content
-    assert "complete reading" in content
+    assert "never mention, apologise for" in content
+    assert "complete as it stands" in content
+
+
+def test_grounding_answers_the_question_asked_and_no_more():
+    """The fix for the apology overshot into the opposite failure. Told to
+    "report the lines above and nothing else", the assistant answered "how much
+    of my memory is in use?" with the processor, the operating system, the
+    memory and every drive — burying the one figure wanted among four
+    that were not. Answering more than was asked is its own wrong answer."""
+    content = SystemStatusTool().run({}, ctx("how much memory is in use?")).content
+    lowered = content.lower()
+
+    assert "answer the question that was actually asked" in lowered
+    assert "only when the question is a general one" in lowered
+    # The wording that caused the dump must not come back.
+    assert "nothing else" not in lowered
 
 
 def test_figures_state_which_way_round_they_run():
@@ -486,3 +501,37 @@ def test_snapshot_reports_used_alongside_free():
     assert abs(total - parts) < 0.05, "used + free should account for total"
     for disk in snapshot["disks"]:
         assert "used_gb" in disk
+
+
+# ---- which tool answers a question about the drive ---------------
+def test_capacity_questions_do_not_go_to_the_stale_disk_scan():
+    """Asked "how much free space is on my drive?" the scan tool answered from
+    file totals — "7.1 GB of total storage" on a 415 GB disk — and then
+    apologised for not knowing the free space. It never had that figure: a scan
+    knows which files exist, not the volume's capacity."""
+    from app.tools.builtin import DiskReportTool
+    from app.tools.system import SystemStatusTool
+
+    disk, system = DiskReportTool(), SystemStatusTool()
+    for question in (
+        "how much free space is on my drive?",
+        "how much space do I have left?",
+        "how full is my disk?",
+        "am I running out of space?",
+    ):
+        assert not disk.matches(question), question
+        assert system.matches(question), question
+
+
+def test_the_disk_scan_still_owns_questions_about_files():
+    """Standing aside on capacity must not cost it its actual job."""
+    from app.tools.builtin import DiskReportTool
+
+    disk = DiskReportTool()
+    for question in (
+        "do I have duplicate files?",
+        "which files are wasting storage?",
+        "are any of my files corrupt?",
+        "what is taking up space on my disk?",
+    ):
+        assert disk.matches(question), question

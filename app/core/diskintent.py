@@ -47,6 +47,25 @@ _DISK_CONTEXT = (
 )
 
 
+# How full a drive is, is *not* a disk-scan question. The scan knows which
+# files exist; it never learns the volume's capacity or free space. Asked "how
+# much free space is on my drive?" the scan tool answered from file totals and
+# reported 7.1 GB of storage, on a 415 GB disk, then apologised for not knowing
+# the free space — having been handed the question it could not answer.
+# Those figures are live and belong to system_status, so this tool stands aside.
+_CAPACITY_PHRASES = (
+    "free space", "space left", "space remaining", "available space",
+    "space available", "how full", "capacity", "running out of space",
+    "space is left", "space do i have", "space have i got",
+)
+
+
+def asks_about_drive_capacity(text: str) -> bool:
+    """Is this about how full the drive is, rather than about its files?"""
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _CAPACITY_PHRASES)
+
+
 def looks_like_disk_question(text: str) -> bool:
     """Cheap gate — only inject scan data when the question is about the disk."""
     t = text.lower()

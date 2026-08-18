@@ -122,9 +122,11 @@ class DiskReportTool(Tool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Answer questions about the user's disk: duplicate files, "
-                    "corrupted or mislabelled files, large unused files, and where "
-                    "storage is going. Uses the most recent local scan."
+                    "Answer questions about the user's files: duplicate files, "
+                    "corrupted or mislabelled files, large unused files, and "
+                    "which folders hold the most data. Uses the most recent "
+                    "local scan. Does NOT know a drive's total size or how much "
+                    "free space is left — use system_status for those."
                 ),
                 "parameters": {
                     "type": "object",
@@ -141,6 +143,9 @@ class DiskReportTool(Tool):
         }
 
     def matches(self, text: str) -> bool:
+        # Capacity questions go to system_status, which reads the volume live.
+        if diskintent.asks_about_drive_capacity(text):
+            return False
         return diskintent.looks_like_disk_question(text)
 
     def match_score(self, text: str) -> int:

@@ -108,10 +108,17 @@ class MemoryStore:
         self._conn.commit()
         return int(cur.lastrowid)
 
-    def latest_session(self) -> int | None:
-        with closing(
-            self._conn.execute("SELECT id FROM sessions ORDER BY last_active DESC LIMIT 1")
-        ) as cur:
+    def latest_session(self, exclude: int | None = None) -> int | None:
+        """The most recently active session. `exclude` skips one, which is what
+        an on-demand /resume needs: the session in progress is already the
+        newest, so the conversation being asked for is the one before it."""
+        sql = "SELECT id FROM sessions"
+        args: tuple = ()
+        if exclude is not None:
+            sql += " WHERE id != ?"
+            args = (exclude,)
+        sql += " ORDER BY last_active DESC LIMIT 1"
+        with closing(self._conn.execute(sql, args)) as cur:
             row = cur.fetchone()
         return int(row[0]) if row else None
 

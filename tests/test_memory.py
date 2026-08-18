@@ -44,6 +44,34 @@ def service(tmp_path) -> MemoryService:
 
 
 # ── conversation persistence ─────────────────────────────────────
+def test_a_new_session_starts_empty(service):
+    """Waking up no longer replays yesterday. Resuming silently made the
+    assistant answer from the old transcript: asked how much memory was in use,
+    it repeated a whole machine report from an earlier conversation."""
+    service.start_session()
+    service.record("user", "how much memory is in use?")
+
+    service.start_session()  # a second wake, no resume
+    assert service.history() == []
+
+
+def test_previous_messages_reaches_past_the_session_in_progress(service):
+    """/resume runs *after* a fresh session exists, so `history` would return
+    the empty one just created. It has to look one further back."""
+    service.start_session()
+    service.record("user", "remind me about the deadline")
+    service.record("assistant", "Friday")
+
+    service.start_session()
+    earlier = service.previous_messages()
+    assert [m.content for m in earlier] == ["remind me about the deadline", "Friday"]
+
+
+def test_previous_messages_is_empty_on_a_first_ever_run(service):
+    service.start_session()
+    assert service.previous_messages() == []
+
+
 def test_conversation_survives_a_new_service(tmp_path):
     """The whole point: closing the terminal must not discard the transcript."""
     path = tmp_path / "memory.sqlite3"

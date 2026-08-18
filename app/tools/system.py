@@ -394,12 +394,6 @@ class SystemStatusTool(Tool):
     def match_score(self, text: str) -> int:
         return count_triggers(text, self._TRIGGERS)
 
-    def match_score(self, text: str) -> int:
-        return count_triggers(text, self._TRIGGERS)
-
-    def match_score(self, text: str) -> int:
-        return count_triggers(text, self._TRIGGERS)
-
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         snapshot = system_snapshot()
         memory = snapshot["memory"]
@@ -413,13 +407,38 @@ class SystemStatusTool(Tool):
                 "earlier in this conversation, including your own previous "
                 "answers — if an earlier reply disagrees with these, the earlier "
                 "reply was wrong.\n"
-                "This is a complete reading, so present it as one: report the "
-                "lines above and nothing else. Do not invent extra sections, and "
-                "do not mention, apologise for, or draw attention to anything "
-                "not listed — naming what you were not given reads as a failure "
-                "when the reading is in fact complete.\n"
-                "For a general overview, lead with the processor and operating "
-                "system, then memory and drives.\n\n"
+                # The previous wording here was "report the lines above and
+                # nothing else", added to stop the model apologising for data it
+                # had not been given. It overshot: asked "how much of my memory
+                # is in use?" the assistant recited the processor, the OS, the
+                # memory and every drive. Answering far more than was asked is
+                # its own kind of wrong answer.
+                "Answer the question that was actually asked, and nothing more. "
+                "A question about one thing gets the lines about that one thing: "
+                "asked how much memory is in use, answer about memory and say "
+                "nothing about the processor, the operating system or the drives. "
+                "Repeating the whole reading buries the one figure the user wanted "
+                "among four they did not ask for.\n"
+                "Give the full overview (processor and operating system first, then "
+                "memory and drives) only when the question is a general one about "
+                "the machine.\n"
+                "Whatever you quote, the reading is complete as it stands: never "
+                "invent a section, and never mention, apologise for, or draw "
+                "attention to anything not listed. Naming what you were not given "
+                "reads as a failure when nothing is missing.\n\n"
+                # The closing line, and the one a 3B model follows most
+                # reliably. Both rules live here together on purpose: split
+                # apart, whichever went last won and the other was dropped.
+                # Both worked examples are here for the same reason: given only
+                # the memory one, it phrased memory answers properly and still
+                # answered a question about the drive with a bare "117.5 GB".
+                # It copies the shape it is shown, so it is shown both.
+                "To close: answer only what was asked, in one short sentence that "
+                "names the figure. Asked how much memory is in use, say something "
+                "like '93% of memory is in use, 0.57 GB still free', and say nothing "
+                "at all about the processor, the drives, the uptime or the "
+                "operating system. Asked how much space is left on a drive, say "
+                "something like 'C: has 117.5 GB still free of 415.8 GB'.\n"
                 f"User's question: {context.request_text}"
             ),
             display=(

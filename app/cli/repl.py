@@ -22,6 +22,12 @@ from config import settings
 
 HISTORY_FILE = Path(settings.upload_dir).parent / "cli_history.txt"
 
+# What the assistant is called on screen. Lower-cased to sit beside the
+# "you" prompt, and taken from the configured name rather than hard-coded:
+# being greeted by "Buddy" and then answered by "assistant" reads as two
+# different programs.
+BOT_LABEL = settings.assistant_name.lower()
+
 
 def banner() -> str:
     """Greeting for a directly-launched session.
@@ -49,6 +55,7 @@ HELP = """[bot]Commands[/bot]
   [user]/memories[/user]         show what the assistant remembers
   [user]/forget[/user] [meta]<id|all>[/meta] delete a remembered fact
   [user]/history[/user]          replay this saved conversation
+  [user]/resume[/user]           bring the previous conversation into context
   [user]/docs[/user]             list indexed documents
   [user]/reset[/user]            wipe the document index
   [user]/clear[/user]            forget this conversation (keeps the index)
@@ -65,6 +72,9 @@ class Session:
     speak: bool = False
     model: str | None = None
     temperature: float | None = None
+    # Whether an earlier conversation has been pulled in. Guards /resume
+    # against appending the same transcript twice.
+    resumed: bool = False
 
     def status(self) -> str:
         bits = [
@@ -208,9 +218,22 @@ def handle_command(assistant: Assistant, session: Session, line: str) -> bool:
             console.print("[warn]nothing saved for this conversation yet[/warn]")
         else:
             for message in stored:
-                label = "you" if message.role == "user" else "assistant"
+                label = "you" if message.role == "user" else BOT_LABEL
                 style = "user" if message.role == "user" else "bot"
                 console.print(f"[{style}]{label}[/{style}] {message.content[:400]}")
+
+    elif cmd == "resume":
+        if session.resumed:
+            console.print("[warn]already resumed[/warn] "
+                          "[hint]/clear first to start fresh[/hint]")
+        else:
+            restored = load_conversation(
+                session, assistant.memory.previous_messages(limit=20)
+            )
+            if restored:
+                console.print(f"[ok]brought back {restored} message(s)[/ok]")
+            else:
+                console.print("[warn]no earlier conversation to resume[/warn]")
 
     elif cmd == "docs":
         docs = assistant.documents()
@@ -225,12 +248,23 @@ def handle_command(assistant: Assistant, session: Session, line: str) -> bool:
 
     elif cmd == "clear":
         session.history.clear()
+        session.resumed = False
         console.print("[ok]conversation cleared[/ok]")
 
     else:
         console.print(f"[err]unknown command /{cmd}[/err] [hint]try /help[/hint]")
 
     return True
+
+
+def load_conversation(session: Session, messages) -> int:
+    """Put stored messages into this session's context. Returns how many."""
+    for message in messages:
+        session.history.append(
+            ChatMessage(role=message.role, content=message.content)
+        )
+    session.resumed = session.resumed or bool(messages)
+    return len(messages)
 
 
 def confirm_action(prompt: str) -> bool:
@@ -248,7 +282,7 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
     """Send one user message and stream the reply."""
     session.history.append(ChatMessage(role="user", content=text))
 
-    console.print("[bot]assistant[/bot] ", end="")
+    console.print(f"[bot]{BOT_LABEL}[/bot] ", end="")
     collected: list[str] = []
     terminal = None
     try:
@@ -412,21 +446,19 @@ def run(
     if greet:
         console.print(banner())
 
+    # Off by default. Silently re-feeding the last transcript made the
+    # assistant answer from it instead of from the question: asked how much
+    # memory was in use, it replayed the whole machine report from an
+    # earlier session. Nothing is lost — the conversation is still on
+    # disk, and /resume or `wake --resume` brings it back on request.
     assistant.memory.start_session(resume=resume)
     if resume:
-        previous = assistant.memory.history(limit=20)
-        if previous:
-            console.print(f"[meta]resumed — {len(previous)} earlier message(s)[/meta]")
-            for message in previous:
-                session.history.append(
-                    ChatMessage(role=message.role, content=message.content)
-                )
-            last = previous[-1]
-            console.print(
-                f"[meta]last: {last.role} — {last.content[:100]}[/meta]"
-            )
-        else:
-            console.print("[meta]no earlier conversation to resume[/meta]")
+        restored = load_conversation(session, assistant.memory.history(limit=20))
+        console.print(
+            f"[meta]resumed — {restored} earlier message(s)[/meta]"
+            if restored
+            else "[meta]no earlier conversation to resume[/meta]"
+        )
 
     health = assistant.health()
     if not health["healthy"]:

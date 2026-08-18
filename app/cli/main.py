@@ -942,6 +942,9 @@ def wake(
     no_warm: bool = typer.Option(False, "--no-warm", help="Skip preloading the model."),
     rag: bool = typer.Option(False, "--rag", help="Start with document grounding on."),
     speak: bool = typer.Option(False, "--speak", help="Read replies aloud."),
+    resume: bool = typer.Option(
+        False, "--resume", "-r", help="Continue the previous conversation."
+    ),
 ) -> None:
     """Start everything and drop into conversation."""
     from app.cli import startup
@@ -985,7 +988,7 @@ def wake(
     run(
         assistant,
         Session(use_rag=rag, speak=speak),
-        resume=True,
+        resume=resume,
         greet=False,  # the startup report above already introduced it
     )
 

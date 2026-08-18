@@ -127,3 +127,25 @@ def test_ollama_probe_is_safe_when_absent():
 def test_ollama_lookup_returns_a_path_or_none():
     found = find_ollama()
     assert found is None or Path(found).exists()
+
+
+# ---- what the user sees ----------------------------------------
+def test_the_reply_label_is_the_assistant_s_name():
+    """Being greeted by "Buddy" and then answered by "assistant" reads as two
+    different programs."""
+    from app.cli.repl import BOT_LABEL
+    from config import settings
+
+    assert BOT_LABEL == settings.assistant_name.lower()
+    assert BOT_LABEL != "assistant"
+
+
+def test_wake_does_not_resume_by_default():
+    """The previous conversation is opt-in. Left on, it leaked old answers into
+    new questions."""
+    import inspect
+
+    from app.cli.main import wake
+
+    default = inspect.signature(wake).parameters["resume"].default
+    assert getattr(default, "default", default) is False

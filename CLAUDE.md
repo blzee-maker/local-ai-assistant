@@ -186,6 +186,18 @@ These cost real debugging time. Do not rediscover them.
   best-scoring one rather than nothing.
 - The prompt must forbid inventing machine or file facts outright. No keyword
   list will ever be complete, so that instruction is the real backstop.
+- Answering more than was asked is its own wrong answer. Told to "report the
+  lines above and nothing else", the assistant met "how much of my memory is
+  in use?" with the processor, the OS, the memory and every drive. Ground a
+  tool with the whole reading, then tell it to answer the question asked.
+- Context is never re-fed silently. `wake` used to resume the last
+  conversation by default, so a stale answer became the source for a new
+  question. Resuming is opt-in (`/resume`, `wake --resume`) and announced.
+- The assistant is called the same thing everywhere. Greeting someone as
+  Buddy and then labelling the reply `assistant` reads as two programs.
+- A tool must stand aside from questions it cannot answer. The disk scan
+  knows which files exist, never a volume's capacity — asked for free space
+  it replied "7.1 GB of total storage" on a 415 GB disk, then apologised.
 - Never infer and store facts about the user in the background. Memory is
   written when they ask for it, shown when it is used, and genuinely deleted
   when they forget it.
