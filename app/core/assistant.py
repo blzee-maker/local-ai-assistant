@@ -240,6 +240,7 @@ class Assistant:
         model: str | None = None,
         temperature: float | None = None,
         confirm: Callable[[str], bool] | None = None,
+        progress: Callable[[str], None] | None = None,
         use_memory: bool = True,
     ) -> Iterator[AssistantEvent]:
         """Run one turn, yielding token events then a single done/error event.
@@ -292,6 +293,7 @@ class Assistant:
                 assistant=self,
                 request_text=last_user_text,
                 confirm=confirm,
+                progress=progress,
             ),
             exclude=excluded,
         )

@@ -113,7 +113,7 @@ wake up buddy                      # start everything, then talk
 python assistant.py doctor          # diagnose the whole stack first
 python assistant.py chat            # REPL; /rag /files /speak /mic /model
 python assistant.py ask "..."       # one-shot, pipeable, --json
-python assistant.py scan            # disk analysis (consent-gated)
+python assistant.py scan            # disk analysis (also runnable from chat)
 python -m pytest tests/ -q          # 210 tests
 ```
 
@@ -186,6 +186,15 @@ These cost real debugging time. Do not rediscover them.
   best-scoring one rather than nothing.
 - The prompt must forbid inventing machine or file facts outright. No keyword
   list will ever be complete, so that instruction is the real backstop.
+- If a capability exists only as a command, chat cannot use it and the
+  assistant ends up naming the command instead of doing the work. The disk
+  scan was CLI-only for that reason; it is now a tool that asks, reports
+  progress, and answers from what it found.
+- Declining one expensive action is "not now", never "never". Recording it
+  as a withdrawal of consent widens a no the way rule 3 forbids widening a
+  yes.
+- A carriage return moves the cursor back but erases nothing — pad a
+  rewritten progress line, or the tail of the previous one stays on screen.
 - Filter in the tool, not in the prompt. Asking a 3B model to ignore most
   of what it was handed does not work: given the whole machine and told to
   report only the memory it answered with the processor, the OS and every

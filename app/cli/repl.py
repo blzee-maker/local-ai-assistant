@@ -278,6 +278,27 @@ def confirm_action(prompt: str) -> bool:
     return answer in {"y", "yes"}
 
 
+# Wide enough to cover the longest phase name plus a count. The padding is the
+# point: a carriage return moves the cursor back but erases nothing, so a short
+# message after a long one leaves the tail of the long one on screen.
+PROGRESS_WIDTH = 64
+
+
+def show_progress(message: str) -> None:
+    """One rewritten line for work measured in minutes.
+
+    Overwrites in place rather than scrolling: a scan emits hundreds of updates
+    and a screen of them buries the conversation that follows.
+    """
+    if message == "done":
+        # Wipe the line so the answer does not start halfway along it.
+        console.print(" " * PROGRESS_WIDTH, end="\r", highlight=False)
+        return
+    console.print(
+        f"[meta]  {message:<{PROGRESS_WIDTH - 2}}[/meta]", end="\r", highlight=False
+    )
+
+
 def run_turn(assistant: Assistant, session: Session, text: str) -> None:
     """Send one user message and stream the reply."""
     session.history.append(ChatMessage(role="user", content=text))
@@ -293,6 +314,7 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
             model=session.model,
             temperature=session.temperature,
             confirm=confirm_action,
+            progress=show_progress,
         ):
             if event.type == "token":
                 collected.append(event.text)

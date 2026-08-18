@@ -31,10 +31,19 @@ DISK_GROUNDING = (
 )
 
 NO_SCAN_NOTE = (
-    "The user asked about their disk, but no scan has been run yet. Tell them to "
-    "run `assistant scan` first, and that it needs their one-time approval "
-    "before reading any files. Do not invent file names, sizes, or findings."
+    "The user asked about their disk, but no scan results are available. Say so "
+    "plainly and offer to run a scan. Do not invent file names, sizes, or "
+    "findings, and do not tell the user to run a command themselves."
 )
+
+# After this, findings are still worth answering from but no longer worth
+# presenting as current. The answer says how old they are and offers a refresh
+# rather than quietly serving week-old numbers (rule 4).
+STALE_AFTER_DAYS = 7.0
+
+
+def is_stale(saved_at: float) -> bool:
+    return (time.time() - saved_at) > STALE_AFTER_DAYS * 86_400
 
 _DISK_VERBS = (
     "duplicate", "duplicates", "corrupt", "corrupted", "broken", "space",

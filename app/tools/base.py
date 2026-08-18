@@ -144,6 +144,10 @@ class ToolContext:
     assistant: Any                      # app.core.Assistant
     request_text: str                   # the user's message, unmodified
     confirm: Callable[[str], bool] | None = None  # front end asks the user
+    # Front end shows progress for work that takes minutes. Optional, because a
+    # tool must behave identically with nobody watching — the daemon wires
+    # neither of these, and a scan there simply runs without narration.
+    progress: Callable[[str], None] | None = None
 
     def ask_confirmation(self, prompt: str) -> bool:
         """Destructive tools call this. No confirmer wired up means no.
@@ -155,6 +159,17 @@ class ToolContext:
         if self.confirm is None:
             return False
         return self.confirm(prompt)
+
+    def report_progress(self, message: str) -> None:
+        """Say what a long tool is doing. Silent when nothing is listening."""
+        if self.progress is None:
+            return
+        try:
+            self.progress(message)
+        except Exception:
+            # A front end that fails to draw a progress line must not take the
+            # scan down with it (rule 10).
+            pass
 
 
 @dataclass

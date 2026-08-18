@@ -155,17 +155,31 @@ class DiskReportTool(Tool):
         )
 
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
-        grounded, note = diskintent.ground_prompt(context.request_text)
+        grounded, _note = diskintent.ground_prompt(context.request_text)
         if grounded is None:
-            # No scan on record. Refuse honestly rather than inventing findings.
-            return ToolResult.failure(note or diskintent.NO_SCAN_NOTE,
-                                      display="no disk scan available")
+            # No scan on record. This used to refuse and name the command to
+            # type, which is the one thing an assistant exists not to do. It
+            # offers to do the work instead, and perform_scan asks before it
+            # starts.
+            from app.tools.disk import perform_scan
+
+            return perform_scan(context, context.request_text)
 
         cached = diskintent.load_report() or {}
-        age = diskintent.describe_age(cached.get("saved_at", 0.0))
+        saved_at = cached.get("saved_at", 0.0)
+        age = diskintent.describe_age(saved_at)
+        content = grounded
+        if diskintent.is_stale(saved_at):
+            # Answer from what we have, but never let stale numbers pass as
+            # current (rule 4).
+            content += (
+                f"\n\nThese findings are from {age} and may be out of date. "
+                "Answer from them, then add one short line saying how old they "
+                "are and that the user can ask for a rescan."
+            )
         return ToolResult(
             ok=True,
-            content=grounded,
+            content=content,
             display=f"using disk scan from {age}",
             meta={"scan_age": age, "summary": cached.get("summary", "")},
         )
@@ -262,9 +276,12 @@ def default_tools() -> list[Tool]:
     """The tools registered for a normal session."""
     from app.tools.system import system_tools
 
+    from app.tools.disk import RunDiskScanTool
+
     return [
         OpenLocalFileTool(),
         DiskReportTool(),
+        RunDiskScanTool(),
         RememberTool(),
         *system_tools(),
     ]

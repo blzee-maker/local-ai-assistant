@@ -545,17 +545,27 @@ def test_a_memory_question_is_ordered_by_memory():
     largest, llama-server.exe at 2,185 MB, was not in the list."""
     from app.tools.system import sample_processes
 
-    by_memory = sample_processes(limit=5, sort_by="memory")
-    by_cpu = sample_processes(limit=5, sort_by="cpu")
+    # One sample, sorted two ways. Taking two samples compared different
+    # moments: a process grew by half a megabyte between them and the assertion
+    # failed on a system that was behaving correctly.
+    everything = sample_processes(sort_by="memory")
+    by_memory = everything[:5]
+    by_cpu = sorted(everything, key=lambda p: p.cpu_percent, reverse=True)[:5]
 
     assert [p.memory_mb for p in by_memory] == sorted(
         (p.memory_mb for p in by_memory), reverse=True
     )
+    # The point of the fix: the biggest memory user is never cut off.
+    assert max(p.memory_mb for p in by_memory) >= max(p.memory_mb for p in by_cpu)
+
+
+def test_the_cpu_ordering_is_by_cpu():
+    from app.tools.system import sample_processes
+
+    by_cpu = sample_processes(limit=5, sort_by="cpu")
     assert [p.cpu_percent for p in by_cpu] == sorted(
         (p.cpu_percent for p in by_cpu), reverse=True
     )
-    # The point of the fix: the biggest memory user is not missed.
-    assert max(p.memory_mb for p in by_memory) >= max(p.memory_mb for p in by_cpu)
 
 
 def test_the_ordering_follows_the_question():
