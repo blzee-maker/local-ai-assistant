@@ -146,6 +146,15 @@ These cost real debugging time. Do not rediscover them.
   every working directory its own empty `data/` folder.
 - **cmd.exe cannot see PowerShell profile functions.** Shipping a command means
   both a profile function *and* a `.cmd` shim on PATH (`bin/`).
+- **Windows process-creation flags are mutually exclusive.** CREATE_NO_WINDOW,
+  DETACHED_PROCESS and CREATE_NEW_CONSOLE cannot be combined: OR-ing the first
+  two opens a visible console, CREATE_NO_WINDOW alone leaves the child tied to
+  its launcher's console. Background children use DETACHED_PROCESS and write to
+  a log file (`app/cli/startup.py`).
+- **`pythonw.exe` has no stdout.** Anything that prints dies instantly under it.
+- **Never identify a process by substring over its joined command line.** A
+  match on "assistant.py" plus "daemon" hit the shell searching for daemons and
+  killed it. Match the argument list.
 - **Memory is genuinely tight** (~7.8GB total, often <1GB free). Ollama returns
   HTTP 5xx when a model cannot load. That is what the fallback model is for.
 

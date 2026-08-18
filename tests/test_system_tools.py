@@ -440,8 +440,16 @@ def test_grounding_forbids_inventing_absent_sections():
     """It reported active connections and download speeds from a tool that
     collects no network data at all."""
     content = SystemStatusTool().run({}, ctx("full system analysis")).content
-    assert "no network" in content.lower()
-    assert "do not add any section" in content.lower()
+    assert "do not invent extra sections" in content.lower()
+
+
+def test_grounding_does_not_invite_an_apology():
+    """Listing what was unavailable produced "I am unable to perform a
+    comprehensive analysis due to the lack of network, GPU and temperature
+    data" — turning a complete reading into an apology."""
+    content = SystemStatusTool().run({}, ctx("system analysis")).content.lower()
+    assert "do not mention, apologise for" in content
+    assert "complete reading" in content
 
 
 def test_figures_state_which_way_round_they_run():

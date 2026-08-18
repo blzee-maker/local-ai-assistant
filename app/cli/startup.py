@@ -85,13 +85,37 @@ def find_ollama() -> str | None:
 
 
 def _detached_kwargs() -> dict:
-    """Spawn flags that let a child outlive this process without a console."""
+    """Spawn flags for a child that must outlive its launcher, invisibly.
+
+    `DETACHED_PROCESS` alone. Windows documents CREATE_NO_WINDOW,
+    DETACHED_PROCESS and CREATE_NEW_CONSOLE as **mutually exclusive**, and the
+    two wrong answers both showed up here:
+
+    * OR-ing CREATE_NO_WINDOW with DETACHED_PROCESS is a contradictory request,
+      not "extra hidden" — the daemon opened a visible console of its own and
+      stray consoles flashed on screen.
+    * CREATE_NO_WINDOW alone hides the window but leaves the child attached to
+      the launcher's console, so the daemon died the moment the command that
+      started it returned.
+
+    DETACHED_PROCESS gives the child no console at all: nothing to show, and
+    nothing to be killed with. Its output is handed a real file instead, since
+    a process with no console still needs somewhere for stdout to go.
+    """
     if sys.platform == "win32":
-        flags = 0
-        for name in ("CREATE_NO_WINDOW", "DETACHED_PROCESS"):
-            flags |= getattr(subprocess, name, 0)
-        return {"creationflags": flags}
+        return {"creationflags": getattr(subprocess, "DETACHED_PROCESS", 0)}
     return {"start_new_session": True}
+
+
+# The daemon's own output. Sent to a file rather than DEVNULL: a background
+# process whose errors are discarded is undiagnosable, and this cost real time —
+# the daemon was crashing instantly on startup and simply appeared not to run.
+DAEMON_LOG = Path(settings.upload_dir).parent / "daemon.log"
+
+# pythonw.exe was tried here and is wrong. It has no stdout at all, so the
+# scheduler's first status line raised and killed the daemon on launch, with the
+# traceback going to DEVNULL. CREATE_NO_WINDOW on the ordinary interpreter
+# hides the console on its own.
 
 
 def ensure_ollama(timeout: float = OLLAMA_START_TIMEOUT) -> StepResult:
@@ -153,25 +177,87 @@ def warm_model(assistant, timeout_s: float = 180.0) -> StepResult:
 
 
 # ── the background daemon ────────────────────────────────────────
-def daemon_pid() -> int | None:
-    """The running daemon's pid, or None. Verifies identity, not just liveness."""
-    try:
-        pid = int(DAEMON_PID_FILE.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
+def _entry_script() -> Path:
+    return Path(__file__).resolve().parents[2] / "assistant.py"
 
+
+def is_daemon_cmdline(cmdline: list[str] | None, name: str = "") -> bool:
+    """Is this argv *actually* our daemon?
+
+    Matched against the argument list, never a joined string. A substring test
+    over the whole command line ("assistant.py" and "daemon" both appear
+    somewhere) matches any process that merely *mentions* those words — during
+    development it matched the shell command being used to search for daemons,
+    and terminated it. A process-killer that fires on a coincidental mention is
+    exactly the asymmetric mistake rule 6 is about.
+
+    So all three must hold: a Python interpreter, running this project's
+    assistant.py, with `daemon` as a real argument.
+    """
+    if not cmdline:
+        return False
+    if name and Path(name).stem.lower() not in {"python", "pythonw"}:
+        return False
+
+    entry = str(_entry_script()).lower()
+    args = [str(part).lower() for part in cmdline]
+
+    interpreter = Path(args[0]).stem if args else ""
+    if interpreter not in {"python", "pythonw"}:
+        return False
+    if not any(Path(arg).name == "assistant.py" and arg == entry for arg in args[1:]):
+        return False
+    return "daemon" in args[1:]
+
+
+def find_daemons() -> list[int]:
+    """Every running daemon, found by inspecting argument lists.
+
+    The pid file alone is not enough. It records one pid, so a daemon that was
+    started and then lost track of — the file overwritten, or the process
+    surviving a crash — becomes invisible: `ensure_daemon` starts another and
+    `stop_daemon` leaves the old one running. Two accumulated that way during
+    development.
+    """
     try:
         import psutil
+    except ImportError:
+        return []
 
-        process = psutil.Process(pid)
-        with process.oneshot():
-            # A recycled pid could be anything; require it to look like ours.
-            command = " ".join(process.cmdline()).lower()
-        if "assistant" in command and "daemon" in command:
-            return pid
-    except Exception:
+    mine = os.getpid()
+    matched: dict[int, int | None] = {}
+    for process in psutil.process_iter(["pid", "name", "cmdline", "ppid"]):
+        try:
+            if process.info["pid"] == mine:
+                continue
+            if is_daemon_cmdline(process.info["cmdline"], process.info.get("name") or ""):
+                matched[process.info["pid"]] = process.info.get("ppid")
+        except Exception:
+            continue
+
+    # One launch produces two matching processes: the virtualenv's python.exe is
+    # a redirector that re-runs the base interpreter with identical argv. Both
+    # look like the daemon, and treating them as two led to the "duplicate"
+    # being terminated — which was the actual worker, so the daemon appeared to
+    # start and vanish. Keep only tree roots, so a launcher and its child count
+    # once.
+    return [pid for pid, parent in matched.items() if parent not in matched]
+
+
+def daemon_pid() -> int | None:
+    """A running daemon's pid, or None. Verifies identity, not just liveness."""
+    running = find_daemons()
+    if not running:
         return None
-    return None
+
+    # Prefer the recorded one so the reported pid stays stable across calls.
+    try:
+        recorded = int(DAEMON_PID_FILE.read_text(encoding="utf-8").strip())
+        if recorded in running:
+            return recorded
+    except (OSError, ValueError):
+        pass
+    return running[0]
 
 
 def ensure_daemon() -> StepResult:
@@ -181,18 +267,27 @@ def ensure_daemon() -> StepResult:
             True, f"background daemon already running (pid {existing})", skipped=True
         )
 
-    entry = Path(__file__).resolve().parents[2] / "assistant.py"
+    entry = _entry_script()
+    try:
+        DAEMON_LOG.parent.mkdir(parents=True, exist_ok=True)
+        log = DAEMON_LOG.open("a", encoding="utf-8", errors="replace")
+    except OSError:
+        log = None
+
     try:
         process = subprocess.Popen(
             [sys.executable, str(entry), "daemon", "run"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if log else subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             cwd=str(entry.parent),
             **_detached_kwargs(),
         )
     except Exception as exc:
         return StepResult(False, "could not start the daemon: " + str(exc))
+    finally:
+        if log is not None:
+            log.close()  # the child keeps its own inherited handle
 
     try:
         DAEMON_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -200,24 +295,43 @@ def ensure_daemon() -> StepResult:
     except OSError:
         pass  # the daemon runs regardless; we just cannot dedupe next time
 
+    # Deliberately no "kill the duplicates" step here. One was written and
+    # removed: it terminated a shell whose command line merely mentioned the
+    # word daemon, and then the daemon itself. Killing processes on a heuristic
+    # match is not worth the tidiness it buys (rule 6). `ensure_daemon` checks
+    # before starting, and `sleep` stops everything it finds.
     return StepResult(True, f"background daemon started (pid {process.pid})")
 
 
 def stop_daemon() -> StepResult:
-    pid = daemon_pid()
-    if pid is None:
+    """Stop every daemon, not just the recorded one — strays must not survive."""
+    running = find_daemons()
+    if not running:
+        DAEMON_PID_FILE.unlink(missing_ok=True)
         return StepResult(True, "no daemon running", skipped=True)
-    try:
-        import psutil
 
-        process = psutil.Process(pid)
-        process.terminate()
-        process.wait(timeout=10)
-    except Exception as exc:
-        return StepResult(False, "could not stop the daemon: " + str(exc))
+    import psutil
+
+    stopped: list[int] = []
+    failed: list[str] = []
+    for pid in running:
+        try:
+            process = psutil.Process(pid)
+            process.terminate()
+            process.wait(timeout=10)
+            stopped.append(pid)
+        except psutil.NoSuchProcess:
+            stopped.append(pid)
+        except Exception as exc:
+            failed.append(f"{pid} ({exc})")
 
     DAEMON_PID_FILE.unlink(missing_ok=True)
-    return StepResult(True, f"daemon stopped (pid {pid})")
+    if failed:
+        return StepResult(False, "could not stop: " + ", ".join(failed))
+
+    listed = ", ".join(str(pid) for pid in stopped)
+    plural = "s" if len(stopped) > 1 else ""
+    return StepResult(True, f"daemon{plural} stopped (pid {listed})")
 
 
 # ── consent ──────────────────────────────────────────────────────
