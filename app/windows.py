@@ -158,7 +158,8 @@ def raise_window(hwnd: int) -> bool:
     What blocks it is not the technique. Windows only lets the process that
     already owns the foreground hand it to another, so a focus change works
     when the assistant is the terminal the user is typing in, and does not from
-    a background process. The result is therefore checked and reported rather
+    a background process. Confirmed in use: raising a window fails from a
+    detached test harness and works from a real terminal session. The result is therefore checked and reported rather
     than assumed — telling someone a window was raised when it was not is
     worse than saying it could not be.
     """
