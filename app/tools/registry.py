@@ -179,6 +179,28 @@ class ToolRegistry:
         ledger = self.ledger
         risk = tool.risk.value
 
+        # Pre-flight, before *any* prompt — consent included. If the action is
+        # already impossible there is nothing to ask about.
+        #
+        # Found by running it: asked to end csrss.exe, the assistant prompted
+        # "End csrss.exe? Unsaved work will be lost", accepted the user's yes,
+        # and only then refused. That prompt is a lie, and approving prompts
+        # that get silently blocked is exactly the habit not to train. Asking
+        # for standing consent first had the same shape: "close_app" was
+        # granted permission it was about to refuse to use.
+        precheck = getattr(tool, "precheck", None)
+        if callable(precheck):
+            try:
+                refusal = precheck(invocation.arguments, context)
+            except Exception:
+                refusal = None
+            if refusal is not None:
+                ledger.record(
+                    tool.name, risk, invocation.source, invocation.arguments,
+                    "refused", refusal.display or refusal.correction,
+                )
+                return refusal
+
         # Consent — recorded once per tool, for anything that changes state.
         if tool.risk.needs_consent:
             decision = ledger.decision(tool.name)
@@ -215,26 +237,6 @@ class ToolRegistry:
                             f"`assistant tools --grant {tool.name}`."
                         ),
                     )
-
-        # Pre-flight — refuse *before* asking, when the answer is already no.
-        #
-        # Found by running it: asked to end csrss.exe, the assistant prompted
-        # "End csrss.exe? Unsaved work will be lost", accepted the user's yes,
-        # and only then refused. That prompt is a lie — the action was never
-        # possible — and approving destructive prompts that get silently blocked
-        # is exactly the habit not to train.
-        precheck = getattr(tool, "precheck", None)
-        if callable(precheck):
-            try:
-                refusal = precheck(invocation.arguments, context)
-            except Exception:
-                refusal = None
-            if refusal is not None:
-                ledger.record(
-                    tool.name, risk, invocation.source, invocation.arguments,
-                    "refused", refusal.display or refusal.correction,
-                )
-                return refusal
 
         # Confirmation — per invocation, for destructive actions only.
         if tool.risk.needs_confirmation:

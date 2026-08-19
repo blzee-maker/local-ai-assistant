@@ -100,6 +100,7 @@ app/analyzer/   Read-only disk analysis. Never writes to user files.
 app/tools/      Tool registry: one dispatch path for every capability.
 app/memory/     Conversation persistence + explicitly-remembered facts.
 app/daemon/     Scheduled background jobs. Runs with no confirmer attached.
+app/windows.py  Win32 window + app-launch primitives. UI-neutral.
 app/consent.py  Recorded, scoped permission for reading user folders.
 evals/          Golden-dataset RAG benchmark.
 ```
@@ -164,6 +165,19 @@ These cost real debugging time. Do not rediscover them.
 - **Never identify a process by substring over its joined command line.** A
   match on "assistant.py" plus "daemon" hit the shell searching for daemons and
   killed it. Match the argument list.
+- **An undeclared ctypes function returns a C int.** So `GetForegroundWindow()`
+  handed back a 64-bit HWND truncated to 32 bits, every raise-to-front
+  compared unequal, and the assistant reported a focus change as refused
+  when it had worked. Declare `restype`/`argtypes` for every Win32 call.
+- **The Start Menu is not the list of installed apps.** Walking `*.lnk`
+  finds Visual Studio Code and misses Spotify, because Store apps have no
+  shortcut file. `Get-StartApps` returns both (272 vs 195 here), and its
+  AppIDs launch through `shell:AppsFolder`.
+- **Only the foreground process may hand over the foreground.**
+  `SetForegroundWindow` works from the terminal the user is typing in and
+  is refused from a background process. The ALT-keypress and
+  minimise/restore workarounds were measured and changed nothing, so the
+  result is checked and reported rather than assumed.
 - **Memory is genuinely tight** (~7.8GB total, often <1GB free). Ollama returns
   HTTP 5xx when a model cannot load. That is what the fallback model is for.
 
@@ -190,6 +204,16 @@ These cost real debugging time. Do not rediscover them.
   assistant ends up naming the command instead of doing the work. The disk
   scan was CLI-only for that reason; it is now a tool that asks, reports
   progress, and answers from what it found.
+- A tool's `precheck` runs before *any* prompt, consent included. Asking
+  permission for something about to be refused is the same lie as
+  confirming it: "Allow 'close_app'?" was granted moments before the tool
+  refused to close a protected process.
+- Closing an app is not killing it. `psutil.terminate()` on Windows is
+  `TerminateProcess` and takes unsaved work with it; `WM_CLOSE` is what the
+  X button does and lets the app prompt. Hence `close_app` is WRITE and
+  `end_process` stays DESTRUCTIVE.
+- Never close a window belonging to this process or its ancestors —
+  "close terminal" would otherwise end the conversation that asked.
 - Declining one expensive action is "not now", never "never". Recording it
   as a withdrawal of consent widens a no the way rule 3 forbids widening a
   yes.

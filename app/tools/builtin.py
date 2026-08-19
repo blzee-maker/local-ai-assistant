@@ -276,6 +276,7 @@ def default_tools() -> list[Tool]:
     """The tools registered for a normal session."""
     from app.tools.system import system_tools
 
+    from app.tools.apps import app_tools
     from app.tools.disk import RunDiskScanTool
 
     return [
@@ -283,5 +284,6 @@ def default_tools() -> list[Tool]:
         DiskReportTool(),
         RunDiskScanTool(),
         RememberTool(),
+        *app_tools(),
         *system_tools(),
     ]
