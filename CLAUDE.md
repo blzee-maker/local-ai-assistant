@@ -178,6 +178,9 @@ These cost real debugging time. Do not rediscover them.
   is refused from a background process. The ALT-keypress and
   minimise/restore workarounds were measured and changed nothing, so the
   result is checked and reported rather than assumed.
+- **A piped stdout gets the locale codepage, not UTF-8.** So `doctor | tail`
+  died on the tick character while the same command in a console worked.
+  `app/cli/render` reconfigures both streams to UTF-8 with `errors="replace"`.
 - **Memory is genuinely tight** (~7.8GB total, often <1GB free). Ollama returns
   HTTP 5xx when a model cannot load. That is what the fallback model is for.
 
@@ -253,6 +256,17 @@ These cost real debugging time. Do not rediscover them.
 - Background work is a guest on this machine: one job at a time, expensive work
   never on launch, and a first sweep records a baseline rather than ingesting
   everything it finds.
+- Model choices are measured on this project's own prompts, not on
+  reputation. The configured fallback was `llama3.2:1b` because it shares a
+  family with the main model; measured, it held **more** memory (2.36 GB)
+  than `qwen2.5:1.5b` (1.98 GB) at equal routing accuracy. Record the
+  numbers next to the constant (`config.fallback_model`).
+- A safety net must cover every path that can hit the failure. `chat_stream`
+  fell back when the model would not load; `chat` did not, so on a
+  memory-tight machine every *tool selection* silently dropped to keyword
+  scoring at exactly the moment the fallback existed for.
+- A summary must not contradict the lines above it. `doctor` printed
+  "All good." on a run that had just warned the fallback model was missing.
 - Similarity thresholds are *measured against the real embedder*, not guessed.
   A plausible-looking constant tuned against a fake silently dropped real
   recalls; record the probe numbers next to the constant.

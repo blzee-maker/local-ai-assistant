@@ -48,7 +48,21 @@ class Settings(BaseSettings):
     default_model: str = "llama3.2:latest"
     # Used automatically when the default model fails to load (typically out of
     # memory on a small machine). Set to "" to disable the safety net.
-    fallback_model: str = "llama3.2:1b"
+    # Measured on this machine rather than assumed, and the assumption was
+    # wrong: llama3.2:1b is the same family as the main model but held MORE
+    # memory than qwen2.5:1.5b, because its larger vocabulary and the 8k KV
+    # cache outweigh the smaller weight count.
+    #
+    #   model             resident   tool routing   figures quoted exactly
+    #   llama3.2:latest    3.39 GB       9/9              3/3
+    #   llama3.2:1b        2.36 GB       9/9              3/3
+    #   qwen2.5:1.5b       1.98 GB       9/9              3/3
+    #
+    # So the fallback frees 1.4 GB, still routes every question correctly and
+    # never altered a figure it was given. It is not the main model because on
+    # the harder grounding cases it strayed outside the section it was asked
+    # about, which is what the 3B was drilled not to do.
+    fallback_model: str = "qwen2.5:1.5b"
 
     # Ollama can route inference to hosted "-cloud" models. Allowing that would
     # send prompts and file contents off the machine, which is the one thing

@@ -26,6 +26,30 @@ THEME = Theme(
     }
 )
 
+def _force_utf8() -> None:
+    """Make stdout and stderr able to carry the characters we print.
+
+    Windows gives a piped stdout the locale codepage, cp1252 here, so the tick
+    in "check passed" is unencodable and the *diagnostic tool* dies with a
+    UnicodeEncodeError — `assistant doctor | tail` crashed while the same
+    command in a console worked. A checker that cannot survive being redirected
+    is not much of a checker.
+
+    errors="replace" rather than "strict": a stray character in a file name
+    should degrade to a question mark, never end the command (rule 10).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue  # pythonw with no stdout at all, or an odd wrapper
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
+_force_utf8()
+
 console = Console(theme=THEME, soft_wrap=False)
 err_console = Console(theme=THEME, stderr=True)
 

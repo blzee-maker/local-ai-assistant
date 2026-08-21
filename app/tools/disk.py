@@ -17,6 +17,13 @@ from __future__ import annotations
 import time
 
 from app.tools.base import Risk, Tool, ToolContext, ToolResult
+from config import PROJECT_ROOT
+
+
+def diskintent_cleanup_words() -> tuple[str, ...]:
+    from app.core import diskintent
+
+    return diskintent._CLEANUP_VERBS + diskintent._CLEANUP_NOUNS
 
 # Below this, the model and a full scan are competing for the same few hundred
 # megabytes and the scan crawls. Said out loud rather than left for the user to
@@ -26,6 +33,10 @@ TIGHT_MEMORY_GB = 1.0
 # How often progress is allowed to speak. The walk fires a callback per file,
 # and a line per file is not progress, it is noise.
 PROGRESS_INTERVAL_S = 1.5
+
+# Written into the project rather than the user's Desktop or Documents:
+# somewhere predictable, and somewhere that is not their space to litter.
+CLEANUP_SCRIPT_PATH = PROJECT_ROOT / "cleanup.ps1"
 
 
 def _free_memory_gb() -> float | None:
@@ -198,3 +209,95 @@ class RunDiskScanTool(Tool):
 
     def run(self, arguments: dict, context: ToolContext) -> ToolResult:
         return perform_scan(context, context.request_text)
+
+
+class PrepareCleanupTool(Tool):
+    """Write the reviewable delete script, for the user to check and run."""
+
+    name = "prepare_cleanup"
+    description = "Write a reviewable script listing duplicate files to remove"
+
+    # WRITE: it creates one new file of its own and touches nothing else. The
+    # deletion itself stays with the user, which is the whole point of handing
+    # them a script instead of a result (rule 2).
+    risk = Risk.WRITE
+
+    # Both the trigger words and the gate live in app.core.diskintent, so this
+    # tool and the report tool cannot disagree about which requests are asking
+    # for removal rather than for a description.
+    _TRIGGERS = diskintent_cleanup_words()
+
+    def schema(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": (
+                    "Write a reviewable PowerShell script that would send "
+                    "redundant duplicate copies to the Recycle Bin. Never "
+                    "deletes anything itself. Use when the user asks to clean "
+                    "up, delete duplicates, or free up space."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        }
+
+    def matches(self, text: str) -> bool:
+        from app.core import diskintent
+
+        return diskintent.asks_to_clean_up(text)
+
+    def match_score(self, text: str) -> int:
+        from app.tools.system import count_triggers
+
+        return count_triggers(text, self._TRIGGERS)
+
+    def run(self, arguments: dict, context: ToolContext) -> ToolResult:
+        from app.core import diskintent
+
+        cached = diskintent.load_report() or {}
+        script = cached.get("cleanup_script")
+        if not script:
+            # No scan, or one cached before scripts were kept. Offer to do the
+            # work rather than naming a command to type.
+            return perform_scan(context, context.request_text)
+
+        count = int(cached.get("cleanup_count") or 0)
+        if count == 0:
+            return ToolResult(
+                ok=True,
+                display="nothing to clean up",
+                final_text=(
+                    "There are no redundant duplicate copies to remove, so "
+                    "there is nothing for a cleanup script to do."
+                ),
+                meta={"cleanup_count": 0},
+            )
+
+        target = CLEANUP_SCRIPT_PATH
+        try:
+            # utf-8-sig and CRLF for the same reason the CLI writes it that way:
+            # PowerShell 5.1 reads a BOM-less .ps1 as ANSI and mangles any
+            # non-ASCII path in it, and a delete script pointed at a mangled
+            # path is the one mistake that must not be possible here.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(script, encoding="utf-8-sig", newline="\r\n")
+        except OSError as exc:
+            return ToolResult.failure(
+                f"The cleanup script could not be written: {exc}",
+                display="could not write script",
+                final_text=f"I could not write the cleanup script: {exc}",
+            )
+
+        age = diskintent.describe_age(cached.get("saved_at", 0.0))
+        return ToolResult(
+            ok=True,
+            display=f"wrote cleanup script ({count} files)",
+            final_text=(
+                f"Written to {target}. It lists {count} redundant copies, based "
+                f"on the scan from {age}, and sends them to the Recycle Bin so "
+                "anything you change your mind about is recoverable. Nothing has "
+                "been deleted: read it, then run it yourself if you agree."
+            ),
+            meta={"path": str(target), "cleanup_count": count, "scan_age": age},
+        )

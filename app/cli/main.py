@@ -841,6 +841,15 @@ def doctor() -> None:
     from app import files as filesvc
 
     ok = True
+    # Warnings are counted, not just printed. "All good." was reported on a
+    # run that had just said the fallback model was missing, and a summary
+    # contradicting the lines above it teaches people to ignore the lines.
+    warnings: list[str] = []
+
+    def warn(message: str, note: str = "") -> None:
+        warnings.append(message)
+        console.print(f"[warn]![/warn] {message} {note}".rstrip())
+
     console.print("[bot]Local AI Assistant — diagnostics[/bot]\n")
 
     assistant = _assistant()
@@ -863,10 +872,10 @@ def doctor() -> None:
         elif fallback in health["models"]:
             console.print(f"[ok]✓[/ok] fallback model {fallback} is pulled")
         else:
-            console.print(
-                f"[warn]![/warn] fallback model {fallback} is not pulled "
+            warn(
+                f"fallback model {fallback} is not pulled",
                 f"[hint]ollama pull {fallback}[/hint] "
-                "[meta](no safety net if the main model runs out of memory)[/meta]"
+                "[meta](no safety net if the main model runs out of memory)[/meta]",
             )
 
         # Name any cloud models present, and confirm they are being refused.
@@ -916,20 +925,45 @@ def doctor() -> None:
     if voice_path.exists():
         console.print(f"[ok]✓[/ok] TTS voice present ({voice_path.name})")
     else:
+        warn(
+            f"TTS voice missing at {voice_path}",
+            "[meta](spoken replies unavailable)[/meta]",
+        )
+
+    # Speech-to-text was not checked at all, while TTS and the microphone were.
+    # It is the piece everything spoken depends on, and it downloads ~140 MB on
+    # first use — silently, mid-conversation, unless said here first.
+    whisper_dir = Path(settings.whisper_cache_dir)
+    whisper_files = (
+        [f for f in whisper_dir.rglob("*.bin") if f.is_file()] if whisper_dir.is_dir() else []
+    )
+    if whisper_files:
+        megabytes = sum(f.stat().st_size for f in whisper_files) / (1024 * 1024)
         console.print(
-            f"[warn]![/warn] TTS voice missing at {voice_path} "
-            "[meta](spoken replies unavailable)[/meta]"
+            f"[ok]✓[/ok] STT model {settings.whisper_model} present "
+            f"[meta]({megabytes:,.0f} MB, {settings.whisper_compute_type})[/meta]"
+        )
+    else:
+        warn(
+            f"STT model {settings.whisper_model} not downloaded yet",
+            "[meta](about 140 MB will be fetched on first use of /mic)[/meta]",
         )
 
     if audio.available():
         console.print(f"[ok]✓[/ok] audio devices ready (in: {audio.input_device_name()})")
     else:
-        console.print(
-            "[warn]![/warn] no audio device [meta](/mic and /speak unavailable)[/meta]"
-        )
+        warn("no audio device", "[meta](/mic and /speak unavailable)[/meta]")
 
     console.print()
-    console.print("[ok]All good.[/ok]" if ok else "[err]Some checks failed.[/err]")
+    if not ok:
+        console.print("[err]Some checks failed.[/err]")
+    elif warnings:
+        console.print(
+            f"[warn]Working, with {len(warnings)} warning(s):[/warn] "
+            f"[meta]{'; '.join(warnings)}[/meta]"
+        )
+    else:
+        console.print("[ok]All good.[/ok]")
     raise typer.Exit(0 if ok else 1)
 
 

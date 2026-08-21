@@ -37,3 +37,6 @@ data/memory.sqlite3
 data/daemon.sqlite3
 data/daemon.pid
 data/daemon.log
+
+# Generated cleanup scripts list real paths from the user's folders.
+cleanup*.ps1

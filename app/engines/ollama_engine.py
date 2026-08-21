@@ -113,8 +113,33 @@ class OllamaEngine(LLMEngine):
         options: GenerationOptions | None = None,
     ) -> AssistantTurn:
         opts = options or GenerationOptions()
+        model = self._resolve_model(opts)
+        try:
+            return self._chat_once(messages, tools, opts, model)
+        except Exception as exc:
+            if not self._should_try_fallback(model, exc):
+                raise
+            # This path is tool *selection*, and it had no safety net while
+            # chat_stream did. On a machine tight enough for the main model to
+            # fail loading, every routing decision was therefore falling through
+            # to keyword scoring alone — the fallback existed and went unused
+            # at exactly the moment it was needed.
+            fallback = self._fallback_model
+            assert fallback is not None
+            try:
+                return self._chat_once(messages, tools, opts, fallback)
+            except Exception:
+                raise exc
+
+    def _chat_once(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict] | None,
+        opts: GenerationOptions,
+        model: str,
+    ) -> AssistantTurn:
         payload: dict = {
-            "model": self._resolve_model(opts),
+            "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": False,
             "options": {

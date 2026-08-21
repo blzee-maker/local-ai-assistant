@@ -188,3 +188,107 @@ def test_progress_is_optional_and_never_fatal():
         raise RuntimeError("terminal went away")
 
     ctx("scan", progress=explodes).report_progress("walking")
+
+
+# ── the cleanup script, reachable from conversation ──────────────
+def test_the_grounding_never_tells_the_user_to_type_a_command(monkeypatch):
+    """It used to end every disk answer with "run `assistant scan
+    --cleanup-script cleanup.ps1`" — the same deflection as telling someone to
+    run `systeminfo` themselves, only better disguised."""
+    from app.core import diskintent
+
+    grounded, _note = diskintent.DISK_GROUNDING.format(
+        age="just now", results="x", question="delete my duplicates"
+    ), None
+
+    assert "assistant scan" not in grounded
+    assert "--cleanup-script" not in grounded
+    assert "never name a command for them to type" in grounded.lower()
+    assert "you cannot delete files" in grounded.lower()
+
+
+def test_a_cleanup_request_writes_a_reviewable_script(monkeypatch, tmp_path):
+    """Rule 2: destructive intent produces an artifact the user runs, never an
+    action the assistant takes."""
+    from app.core import diskintent
+    from app.tools import disk as disk_tools
+
+    target = tmp_path / "cleanup.ps1"
+    monkeypatch.setattr(disk_tools, "CLEANUP_SCRIPT_PATH", target)
+    monkeypatch.setattr(
+        diskintent,
+        "load_report",
+        lambda: {
+            "saved_at": 0.0,
+            "cleanup_script": "# review me\nAdd-Type -AssemblyName Microsoft.VisualBasic",
+            "cleanup_count": 3,
+        },
+    )
+
+    result = disk_tools.PrepareCleanupTool().run({}, ctx("delete my duplicate files"))
+
+    assert result.ok
+    assert target.exists()
+    assert "3 redundant copies" in (result.final_text or "")
+    assert "Nothing has been deleted" in (result.final_text or "")
+
+
+def test_the_script_is_written_where_powershell_can_read_it(monkeypatch, tmp_path):
+    """PowerShell 5.1 decodes a BOM-less .ps1 as ANSI and mangles non-ASCII
+    paths. A delete script pointed at a mangled path is the one mistake that
+    must not be possible."""
+    from app.core import diskintent
+    from app.tools import disk as disk_tools
+
+    target = tmp_path / "cleanup.ps1"
+    monkeypatch.setattr(disk_tools, "CLEANUP_SCRIPT_PATH", target)
+    monkeypatch.setattr(
+        diskintent,
+        "load_report",
+        lambda: {"saved_at": 0.0, "cleanup_script": "# café", "cleanup_count": 1},
+    )
+
+    disk_tools.PrepareCleanupTool().run({}, ctx("clean up duplicates"))
+
+    assert target.read_bytes().startswith(b"\xef\xbb\xbf")  # utf-8 BOM
+
+
+def test_nothing_to_clean_says_so_rather_than_writing_an_empty_script(monkeypatch):
+    from app.core import diskintent
+    from app.tools import disk as disk_tools
+
+    monkeypatch.setattr(
+        diskintent,
+        "load_report",
+        lambda: {"saved_at": 0.0, "cleanup_script": "# none", "cleanup_count": 0},
+    )
+
+    result = disk_tools.PrepareCleanupTool().run({}, ctx("clean up duplicates"))
+
+    assert result.ok
+    assert "nothing for a cleanup script to do" in (result.final_text or "")
+
+
+def test_no_scan_yet_offers_one_instead_of_refusing(monkeypatch, granted):
+    from app.core import diskintent
+    from app.tools import disk as disk_tools
+
+    monkeypatch.setattr(diskintent, "load_report", lambda: None)
+
+    asked: list[str] = []
+    disk_tools.PrepareCleanupTool().run(
+        {}, ctx("clean up duplicates", confirm=lambda p: asked.append(p) or False)
+    )
+
+    assert len(asked) == 1  # it offered to scan
+
+
+def test_the_cleanup_tool_writes_a_file_but_deletes_nothing():
+    import inspect
+
+    from app.tools.disk import PrepareCleanupTool
+
+    source = inspect.getsource(PrepareCleanupTool)
+    assert "unlink" not in source
+    assert "rmtree" not in source
+    assert "remove(" not in source

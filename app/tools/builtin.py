@@ -146,6 +146,11 @@ class DiskReportTool(Tool):
         # Capacity questions go to system_status, which reads the volume live.
         if diskintent.asks_about_drive_capacity(text):
             return False
+        # Deletion requests go to prepare_cleanup, which produces something the
+        # user can act on. Left as a candidate, this tool won the choice and
+        # answered "delete my duplicate files" with a list of them.
+        if diskintent.asks_to_clean_up(text):
+            return False
         return diskintent.looks_like_disk_question(text)
 
     def match_score(self, text: str) -> int:
@@ -277,12 +282,13 @@ def default_tools() -> list[Tool]:
     from app.tools.system import system_tools
 
     from app.tools.apps import app_tools
-    from app.tools.disk import RunDiskScanTool
+    from app.tools.disk import PrepareCleanupTool, RunDiskScanTool
 
     return [
         OpenLocalFileTool(),
         DiskReportTool(),
         RunDiskScanTool(),
+        PrepareCleanupTool(),
         RememberTool(),
         *app_tools(),
         *system_tools(),
