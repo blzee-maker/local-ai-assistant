@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     rag_top_k: int = 4         # chunks retrieved per query
 
     # Voice (Phase 4).
+    # The same words that start the assistant from a terminal, so there is one
+    # phrase to remember rather than two. Three words also make an accidental
+    # trigger far less likely than a two-word phrase would.
+    wake_phrase: str = "wake up buddy"
     whisper_model: str = "base.en"        # faster-whisper size (tiny.en = lighter)
     whisper_compute_type: str = "int8"    # int8 = smallest memory on CPU
     whisper_cache_dir: str = "models/whisper"

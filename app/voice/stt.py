@@ -33,5 +33,12 @@ class WhisperSTT(STTEngine):
         )
 
     def transcribe(self, audio_path: str) -> str:
-        segments, _info = self._model.transcribe(audio_path, beam_size=1)
+        # vad_filter is not a speed optimisation, it is a correctness one.
+        # Without it, three seconds of silence took a full second to decode and
+        # came back as the word "You" — an invented utterance, which for an
+        # always-listening loop means waking up at nothing. Silero VAD ships
+        # inside faster-whisper, so this costs no new dependency.
+        segments, _info = self._model.transcribe(
+            audio_path, beam_size=1, vad_filter=True
+        )
         return "".join(segment.text for segment in segments).strip()

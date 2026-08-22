@@ -69,6 +69,11 @@ def test_speech_to_text_is_checked(doctor_run):
 def test_the_fallback_model_is_reported_either_way(doctor_run):
     """It is only a safety net if it is actually on disk, and this machine runs
     close enough to its memory limit to need one."""
+    # Only when the engine answered. With Ollama down, doctor never reaches the
+    # model checks at all, and asserting unconditionally tests the environment
+    # rather than the code.
+    if "unreachable" in doctor_run.stdout:
+        pytest.skip("model server is not running")
     assert "fallback model" in doctor_run.stdout
 
 
