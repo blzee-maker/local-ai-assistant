@@ -56,6 +56,8 @@ HELP = """[bot]Commands[/bot]
   [user]/forget[/user] [meta]<id|all>[/meta] delete a remembered fact
   [user]/history[/user]          replay this saved conversation
   [user]/resume[/user]           bring the previous conversation into context
+  [user]/listen[/user]           hands-free: say the wake phrase, then talk
+  [user]/listen[/user] [meta]device[/meta]    choose which microphone may be used
   [user]/docs[/user]             list indexed documents
   [user]/reset[/user]            wipe the document index
   [user]/clear[/user]            forget this conversation (keeps the index)
@@ -221,6 +223,35 @@ def handle_command(assistant: Assistant, session: Session, line: str) -> bool:
                 label = "you" if message.role == "user" else BOT_LABEL
                 style = "user" if message.role == "user" else "bot"
                 console.print(f"[{style}]{label}[/{style}] {message.content[:400]}")
+
+    elif cmd == "listen":
+        # Imported here, not at module scope: voiceloop imports run_turn from
+        # this module, so a top-level import is a cycle.
+        from app.cli import voiceloop
+        from app.voice import devices
+
+        if arg.lower() in {"device", "devices", "mic", "mics"}:
+            nominated = devices.remembered()
+            for found in devices.input_devices(rescan=True):
+                mark = "*" if nominated and devices.matches(found.name, nominated) else " "
+                console.print(f"  [meta]{mark} [{found.index}][/meta] {found.name}")
+            console.print(
+                "[meta]/listen only <name> to pick one, /listen any to allow all"
+                "[/meta]"
+            )
+        elif arg.lower().startswith("only "):
+            wanted = arg[5:].strip()
+            found = devices.find(wanted)
+            if found is None:
+                console.print(f"[err]no microphone matching {wanted!r} is connected[/err]")
+            else:
+                devices.remember(found.name)
+                console.print(f"[ok]will listen only while {found.name} is connected[/ok]")
+        elif arg.lower() == "any":
+            devices.forget()
+            console.print("[ok]any microphone may be used[/ok]")
+        else:
+            voiceloop.run(assistant, session)
 
     elif cmd == "resume":
         if session.resumed:

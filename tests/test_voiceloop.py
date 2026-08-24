@@ -63,3 +63,51 @@ def test_speech_before_any_wake_is_never_run():
         say=lambda text: events.append(("say", text)),
     )
     assert events == []
+
+
+# ── replies come back as text unless asked otherwise ─────────────
+def test_replies_are_not_spoken_by_default():
+    """Speaking means holding Piper in memory beside the transcriber and the
+    language model. On a machine sitting above 90% used that is the difference
+    between a fallback that rescues an answer and one with nothing left to load
+    into, so voice in / text out is the default."""
+    import inspect
+
+    from app.cli import voiceloop
+
+    source = inspect.getsource(voiceloop.run)
+    assert "session.speak = True" not in source
+
+
+def test_a_silent_session_says_nothing_aloud(monkeypatch):
+    """The acknowledgement and the goodbye are printed either way; only the
+    audio is conditional."""
+    from app.cli import voiceloop
+    from app.cli.repl import Session
+
+    spoken: list[str] = []
+    monkeypatch.setattr(voiceloop, "_say", lambda _a, text: spoken.append(text))
+
+    voiceloop.run(
+        assistant=None,
+        session=Session(speak=False),
+        transcripts=["wake up buddy"],
+        handle=lambda _c: None,
+    )
+    assert spoken == []
+
+
+def test_a_speaking_session_still_can(monkeypatch):
+    from app.cli import voiceloop
+    from app.cli.repl import Session
+
+    spoken: list[str] = []
+    monkeypatch.setattr(voiceloop, "_say", lambda _a, text: spoken.append(text))
+
+    voiceloop.run(
+        assistant=None,
+        session=Session(speak=True),
+        transcripts=["wake up buddy"],
+        handle=lambda _c: None,
+    )
+    assert spoken == ["Yes?"]

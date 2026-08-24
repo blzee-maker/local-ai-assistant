@@ -205,7 +205,7 @@ def _rms(frame: bytes) -> float:
     return float(np.sqrt(np.mean(samples * samples)))
 
 
-def capture_one_utterance(max_seconds: float = 15.0) -> bytes | None:
+def capture_one_utterance(max_seconds: float = 15.0, device: int | None = None) -> bytes | None:
     """Listen until someone speaks, capture that one utterance, and return it as
     WAV bytes. Blocks (waiting for speech) until interrupted.
 
@@ -238,6 +238,10 @@ def capture_one_utterance(max_seconds: float = 15.0) -> bytes | None:
             dtype="int16",
             blocksize=_FRAME,
             callback=callback,
+            # None means "whatever Windows calls default". A nominated device is
+            # passed by index so the assistant listens on the microphone it was
+            # given permission to use, not on whichever one the system picked.
+            device=device,
         )
     except Exception as exc:
         raise RecordingError(f"Could not open the microphone: {exc}") from exc
@@ -299,7 +303,9 @@ def capture_one_utterance(max_seconds: float = 15.0) -> bytes | None:
                 return _frames_to_wav(voiced)
 
 
-def capture_utterance_to_tempfile(max_seconds: float = 15.0) -> Path | None:
+def capture_utterance_to_tempfile(
+    max_seconds: float = 15.0, device: int | None = None
+) -> Path | None:
     """`capture_one_utterance`, written to a temp .wav for faster-whisper."""
-    data = capture_one_utterance(max_seconds=max_seconds)
+    data = capture_one_utterance(max_seconds=max_seconds, device=device)
     return _persist(data) if data else None

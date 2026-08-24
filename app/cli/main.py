@@ -231,14 +231,54 @@ def converse(
         True, "--files/--no-files", help="Let the model open local files by name."
     ),
     model: str = typer.Option(None, "--model", "-m", help="Model for this session."),
+    speak: bool = typer.Option(
+        False, "--speak", help="Read replies aloud as well as printing them."
+    ),
+    device: str = typer.Option(
+        None, "--device", help="Only listen while this microphone is connected."
+    ),
+    any_device: bool = typer.Option(
+        False, "--any-device", help="Forget the nominated microphone."
+    ),
+    list_devices: bool = typer.Option(
+        False, "--list-devices", help="Show microphones and exit."
+    ),
 ) -> None:
     """Hands-free voice chat: say the wake phrase, then talk. Ctrl-C to stop."""
     from app.cli import voiceloop
     from app.cli.repl import Session
+    from app.voice import devices as voice_devices
+
+    if list_devices:
+        nominated = voice_devices.remembered()
+        for found in voice_devices.input_devices(rescan=True):
+            mark = "*" if nominated and voice_devices.matches(found.name, nominated) else " "
+            console.print(f"  [meta]{mark} [{found.index}][/meta] {found.name}")
+        console.print(
+            f"\n[meta]listening on: "
+            f"{nominated or 'whichever microphone is default'}[/meta]"
+        )
+        return
+
+    if any_device:
+        voice_devices.forget()
+        console.print("[ok]any microphone may now be used[/ok]")
+    elif device:
+        found = voice_devices.find(device)
+        if found is None:
+            console.print(
+                f"[err]no microphone matching {device!r} is connected[/err] "
+                "[hint]assistant converse --list-devices[/hint]"
+            )
+            raise typer.Exit(1)
+        voice_devices.remember(found.name)
+        console.print(
+            f"[ok]listening only while {found.name} is connected[/ok]"
+        )
 
     voiceloop.run(
         _assistant(),
-        Session(use_rag=rag, allow_files=files, model=model, speak=True),
+        Session(use_rag=rag, allow_files=files, model=model, speak=speak),
     )
 
 

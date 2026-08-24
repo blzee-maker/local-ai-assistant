@@ -113,7 +113,8 @@ Front ends depend on `app/core`, never the reverse.
 ```bash
 wake up buddy                      # start everything, then talk
 python assistant.py doctor          # diagnose the whole stack first
-python assistant.py chat            # REPL; /rag /files /speak /mic /model
+python assistant.py chat            # REPL; /rag /files /speak /mic /listen
+python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py ask "..."       # one-shot, pipeable, --json
 python assistant.py scan            # disk analysis (also runnable from chat)
@@ -183,6 +184,17 @@ These cost real debugging time. Do not rediscover them.
 - **A piped stdout gets the locale codepage, not UTF-8.** So `doctor | tail`
   died on the tick character while the same command in a console worked.
   `app/cli/render` reconfigures both streams to UTF-8 with `errors="replace"`.
+- **PortAudio caches the device list when it initialises.** A microphone
+  plugged in after the assistant started is invisible until it is torn down
+  and brought back (`sd._terminate()`/`sd._initialize()`, about 20 ms).
+- **MME truncates device names at 31 characters**, so one microphone appears
+  as both `Microphone Array (Intel Smart` and its full name under other host
+  APIs. Match device names as substrings in either direction.
+- **Windows tells PortAudio only a device's name** — no form factor, no
+  bus, no built-in flag. So "is this an external microphone?" cannot be
+  answered, only guessed, and it fails both ways: a virtual audio cable
+  reads as external and one pair of earbuds enumerates as three devices.
+  Have the user nominate a device instead (`app/voice/devices.py`).
 - **Memory is genuinely tight** (~7.8GB total, often <1GB free). Ollama returns
   HTTP 5xx when a model cannot load. That is what the fallback model is for.
 
@@ -249,6 +261,13 @@ These cost real debugging time. Do not rediscover them.
 - A tool must stand aside from questions it cannot answer. The disk scan
   knows which files exist, never a volume's capacity — asked for free space
   it replied "7.1 GB of total storage" on a 415 GB disk, then apologised.
+- Naming a microphone is a convenience, not the guarantee. Listening is off
+  until switched on and visible while it runs; "my buds are connected" is
+  not consent, the way approved folder access is not consent to scan.
+- Voice in does not imply voice out. Speaking a reply holds Piper in memory
+  beside the transcriber and the model, which on this machine is the
+  difference between a fallback that rescues an answer and one with nothing
+  left to load into.
 - Never infer and store facts about the user in the background. Memory is
   written when they ask for it, shown when it is used, and genuinely deleted
   when they forget it.
