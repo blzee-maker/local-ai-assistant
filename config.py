@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # phrase to remember rather than two. Three words also make an accidental
     # trigger far less likely than a two-word phrase would.
     wake_phrase: str = "wake up buddy"
+    # Once woken, how long the assistant keeps taking commands without the wake
+    # phrase. Deliberately short: while awake, any speech in the room becomes a
+    # command, and an absent user is not consent. Long enough for a natural
+    # follow-up ("...and tomorrow?"), short enough that the TV doesn't drive it.
+    voice_follow_up_seconds: float = 12.0
     whisper_model: str = "base.en"        # faster-whisper size (tiny.en = lighter)
     whisper_compute_type: str = "int8"    # int8 = smallest memory on CPU
     whisper_cache_dir: str = "models/whisper"

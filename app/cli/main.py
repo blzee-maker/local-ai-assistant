@@ -225,6 +225,24 @@ def listen(
 
 
 @cli.command()
+def converse(
+    rag: bool = typer.Option(False, "--rag", help="Ground answers in indexed documents."),
+    files: bool = typer.Option(
+        True, "--files/--no-files", help="Let the model open local files by name."
+    ),
+    model: str = typer.Option(None, "--model", "-m", help="Model for this session."),
+) -> None:
+    """Hands-free voice chat: say the wake phrase, then talk. Ctrl-C to stop."""
+    from app.cli import voiceloop
+    from app.cli.repl import Session
+
+    voiceloop.run(
+        _assistant(),
+        Session(use_rag=rag, allow_files=files, model=model, speak=True),
+    )
+
+
+@cli.command()
 def scan(
     export: str = typer.Option(None, "--export", "-e", help="Write a Markdown report."),
     as_json: bool = typer.Option(False, "--json", help="Emit the report as JSON."),

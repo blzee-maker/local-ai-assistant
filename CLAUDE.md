@@ -95,7 +95,8 @@ app/cli/        Terminal front end (Typer + Rich). Rendering only.
 app/core/       Assistant orchestrator + intent modules. UI-neutral.
 app/engines/    LLMEngine seam; Ollama impl; offline policy guard.
 app/rag/        Chunking, ONNX embeddings, FAISS store.
-app/voice/      Whisper STT + Piper TTS behind swappable seams.
+app/voice/      Whisper STT + Piper TTS behind swappable seams; wake-phrase
+                matching (wake.py) and the awake/asleep gate (gate.py).
 app/analyzer/   Read-only disk analysis. Never writes to user files.
 app/tools/      Tool registry: one dispatch path for every capability.
 app/memory/     Conversation persistence + explicitly-remembered facts.
@@ -113,9 +114,10 @@ Front ends depend on `app/core`, never the reverse.
 wake up buddy                      # start everything, then talk
 python assistant.py doctor          # diagnose the whole stack first
 python assistant.py chat            # REPL; /rag /files /speak /mic /model
+python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py ask "..."       # one-shot, pipeable, --json
 python assistant.py scan            # disk analysis (also runnable from chat)
-python -m pytest tests/ -q          # 210 tests
+python -m pytest tests/ -q          # 371 tests
 ```
 
 ## Environment gotchas (Windows)
