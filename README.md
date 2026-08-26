@@ -7,6 +7,13 @@ and voice never leave the device.
 Built to run within tight edge constraints (target: **8GB RAM**), demonstrating
 data-privacy, latency-bound, and edge-deployment engineering.
 
+> **Windows only.** Chat, documents and disk analysis are portable, but system
+> awareness and application control are built on Win32 and PowerShell
+> (`Get-StartApps`, window handles, Known Folders), and the daemon relies on
+> Windows process-creation flags. On macOS or Linux the assistant starts and
+> those capabilities refuse rather than pretend. Said here rather than
+> discovered halfway through setup.
+
 ## Architecture
 
 ```
@@ -66,7 +73,7 @@ One LLM does all the generation; the rest are task-specific networks.
 | Model | Size | Role |
 |---|---|---|
 | `llama3.2:latest` (Llama 3.2 3B) | 2.0 GB | Chat, RAG answers, tool-calling, summarization |
-| `llama3.2:1b` | 1.3 GB | Fallback if the main model can't load |
+| `qwen2.5:1.5b` | 1.0 GB | Fallback if the main model can't load |
 | `all-MiniLM-L6-v2` (ONNX) | 86 MB | RAG embeddings, 384-dim |
 | `faster-whisper base.en` (int8) | 139 MB | Speech → text |
 | `Piper en_US-lessac-medium` | 60 MB | Text → speech |
@@ -78,19 +85,27 @@ retries once with `fallback_model` and **says so** — silently substituting a
 weaker model would make a degraded answer look like the main model's best effort:
 
 ```
-The main model could not be loaded; answered with llama3.2:1b instead.
+The main model could not be loaded; answered with qwen2.5:1.5b instead.
 ```
 
 The retry only fires before the first token; restarting mid-stream would splice
 two different answers together. It also only fires on 5xx — a refused connection
 means Ollama is down, where different weights would not help. Run
-`ollama pull llama3.2:1b` to arm it; `doctor` warns when it isn't pulled.
+`ollama pull qwen2.5:1.5b` to arm it; `doctor` warns when it isn't pulled.
+
+It is `qwen2.5:1.5b` rather than the same-family `llama3.2:1b` because that
+was measured: the 1B model held **more** memory (2.36 GB against 1.98 GB),
+since a larger vocabulary and the 8k KV cache outweigh the smaller weight
+count. Both routed every question in the tool suite correctly and neither
+altered a figure it was given, so the smaller resident footprint decided it.
 
 ## Prerequisites
 
+- **Windows 10 or 11**
 - **Python 3.10+** (tested on 3.13)
 - **[Ollama](https://ollama.com/download)** installed and running
-- A pulled model — default `llama3.2:latest` (Llama 3.2 3B, ~2GB)
+- About **3 GB of disk** for models, and a first run that spends a few minutes
+  fetching them
 
 ## Setup
 
@@ -101,8 +116,38 @@ pip install -r requirements.txt
 copy .env.example .env         # then edit if needed
 
 ollama serve                   # if not already running
-ollama pull llama3.2:latest    # if not already pulled
+ollama pull llama3.2:latest    # the assistant itself, ~2 GB
+ollama pull qwen2.5:1.5b       # the fallback, ~1 GB
 ```
+
+The fallback is not optional on a machine this size. When memory runs out the
+main model fails to load, and without a fallback that is an error message
+instead of a slightly worse answer. `doctor` warns when it is missing.
+
+### Voice (optional)
+
+Speech-to-text downloads itself on first use. The Piper voice for spoken replies
+does not, so fetch it if you want `/speak`:
+
+```bash
+python -m piper.download_voices en_US-lessac-medium --download-dir models/piper
+```
+
+### What the first run costs
+
+Nothing here is bundled, and nothing is fetched until it is needed:
+
+| | size | when |
+|---|---|---|
+| `llama3.2:latest` | ~2 GB | `ollama pull`, above |
+| `qwen2.5:1.5b` | ~1 GB | `ollama pull`, above |
+| embeddings (ONNX) | ~90 MB | first document indexed |
+| Whisper `base.en` | ~140 MB | first use of the microphone |
+| Piper voice | ~60 MB | manual, above |
+
+The first question also pays a **cold model load of roughly 20 seconds** on CPU.
+`wake up buddy` warms the model while it prints its startup report, so that cost
+lands before you have typed anything rather than after.
 
 Check everything is wired up:
 

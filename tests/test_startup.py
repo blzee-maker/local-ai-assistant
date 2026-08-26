@@ -24,8 +24,13 @@ from app.cli.startup import (
 )
 
 ENTRY = str(_entry_script())
-PY = r"C:\Projects\local-ai-assistant\.venv\Scripts\python.exe"
-PYW = r"C:\Projects\local-ai-assistant\.venv\Scripts\pythonw.exe"
+
+# Derived, never written down. These were absolute paths to one developer's
+# checkout, so the suite failed for anyone who cloned the project anywhere else
+# — a test that only passes on the machine that wrote it is worse than no test,
+# because it fails first for the person least able to tell it is a false alarm.
+PY = sys.executable
+PYW = str(Path(sys.executable).with_name("pythonw.exe"))
 
 
 # ── identifying our own daemon ───────────────────────────────────
