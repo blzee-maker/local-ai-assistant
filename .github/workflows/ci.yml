@@ -1,0 +1,67 @@
+# Continuous integration.
+#
+# Two things run here, and one deliberately does not.
+#
+# The test suite runs on Windows, because that is the only platform this project
+# targets and roughly a third of the suite is about Windows behaviour: console
+# handles, process creation flags, the Start Menu, PortAudio host APIs. Running
+# it on Linux would skip those and report a green tick for a suite that never
+# tested the thing most likely to break.
+#
+# The retrieval half of the eval runs and gates. It needs no language model, is
+# deterministic, and finishes in under a second, so it can say "that change made
+# retrieval worse" on every push.
+#
+# The generation half does not run here. It needs Ollama and a 2 GB model, takes
+# ~4.5 minutes locally, and its score moves with sampling. Gating on a number
+# that wobbles teaches people to re-run CI until it passes, which is worse than
+# not measuring it at all. It stays a local command: `python assistant.py eval`.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      # The ONNX embedding model is ~90 MB and is fetched on first use. Cached
+      # on the lock file so a normal run does not re-download it.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: models/embeddings
+          key: embeddings-${{ hashFiles('requirements.txt') }}
+
+      # `not machine` skips the handful of tests that assert facts about a
+      # specific computer — which applications are installed, that a microphone
+      # exists. They are among the most valuable tests in the suite and a build
+      # agent cannot answer them honestly, so they are skipped rather than
+      # watered down into something that passes everywhere.
+      - name: Tests
+        run: python -m pytest tests/ -q -m "not machine"
+
+      # 100% and MRR 1.000 is the measured baseline, so 0.95 fails on a single
+      # regression: one miss of twelve is 91.7%. Not 1.0, because embedding
+      # scores are floating point and CI hardware is not this laptop; not 0.9,
+      # because that would let a real miss through.
+      - name: Retrieval eval
+        run: python assistant.py eval --retrieval-only --threshold 0.95

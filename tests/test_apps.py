@@ -48,6 +48,7 @@ def test_a_bare_verb_names_nothing():
 
 
 # ── matching installed apps ──────────────────────────────────────
+@pytest.mark.machine
 def test_store_apps_are_found_too():
     """Walking Start Menu shortcuts finds Visual Studio Code and misses Spotify
     entirely, because Store apps have no shortcut file."""
@@ -62,6 +63,7 @@ def test_an_exact_name_beats_a_longer_one():
     assert win.score_name("visual studio code", "Visual Studio Code") == 100
 
 
+@pytest.mark.machine
 def test_shorthands_people_actually_type():
     assert [a.name for a in win.find_installed("vs code")[:1]] == ["Visual Studio Code"]
     assert [a.name for a in win.find_installed("vscode")[:1]] == ["Visual Studio Code"]

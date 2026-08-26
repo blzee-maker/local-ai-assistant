@@ -95,6 +95,47 @@ It is the same local llama3.2 doing the judging, which is a real accuracy
 ceiling. The report labels the number **advisory** for that reason. Treat it as
 a smoke alarm, not a measurement.
 
+## Baseline, and what CI gates
+
+Measured on the development machine (i5-1135G7, 8 GB, llama3.2:3b, top_k 4).
+Recorded here so a threshold is derived from a number rather than chosen because
+it looked round.
+
+| stage | metric | baseline |
+|---|---|---|
+| retrieval | hit@4 | **100%** (12 answerable cases) |
+| retrieval | MRR | **1.000** |
+| retrieval | wall time | 0.3s, no model |
+| generation | answerable accuracy | **67%** (8 of 12) |
+| generation | refusal accuracy | **67%** (2 of 3 absent cases) |
+| generation | over-refusal | 0% |
+| generation | wall time | 279s, 18.5s per case |
+
+**CI gates retrieval at 0.95**, and nothing else. One miss of twelve is 91.7%,
+so a single regression fails the build. Not 1.0, because embedding scores are
+floating point and a build agent is not this laptop; not 0.9, because that would
+let a real miss through.
+
+Generation is deliberately *not* gated. It needs Ollama and a 2 GB model, takes
+four and a half minutes, and its score moves with sampling. A gate on a number
+that wobbles teaches people to re-run CI until it goes green, which is worse
+than not measuring it.
+
+The generation figure is the honest headline of this project: **a third of
+answerable questions are still wrong**, with retrieval scoring perfectly on
+every one of them. The failures — `warranty-length`, `founders`,
+`peak-power`, `warranty-paraphrase` — are all cases where the right chunk was
+retrieved at rank 1 and the model still did not produce the fact. That is a
+generation problem, and it is where the next work is.
+
+### A run that measured nothing is never a pass
+
+With Ollama down, every case returned `[engine error: ...]`, the harness scored
+it 8% and printed *"retrieval OK, model fumbled — tune RAG_PROMPT_TEMPLATE or
+try a larger model"*. Nothing was wrong with the prompt or the model. Engine
+failures are now counted separately, reported as an outage, and fail the gate
+outright regardless of the arithmetic.
+
 ## Metric reference
 
 | Metric | Meaning | Read it as |

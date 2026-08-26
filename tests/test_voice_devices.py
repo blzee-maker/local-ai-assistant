@@ -99,6 +99,7 @@ def test_no_devices_at_all_is_handled(monkeypatch):
 
 
 # ── the real machine ─────────────────────────────────────────────
+@pytest.mark.machine
 def test_the_system_reports_at_least_one_microphone():
     """A live check, because every test above uses a stand-in. If PortAudio
     stops enumerating, the fakes would happily keep passing."""
@@ -107,6 +108,7 @@ def test_the_system_reports_at_least_one_microphone():
     assert all(d.name for d in found)
 
 
+@pytest.mark.machine
 def test_rescanning_does_not_raise():
     """PortAudio caches its device list at start-up, so a microphone plugged in
     afterwards is invisible until it is re-initialised. Measured at ~20 ms."""

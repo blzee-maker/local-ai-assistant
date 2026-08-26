@@ -107,10 +107,46 @@ def print_generation(report: EvalReport) -> None:
     console.print(f"  [meta]mean latency {s['mean_latency_s']:.1f}s[/meta]\n")
 
 
+ENGINE_ERROR_MARKER = "[engine error:"
+
+
+def engine_failures(report: EvalReport) -> list[str]:
+    """Cases where the model server never answered at all.
+
+    Kept apart from wrong answers because the fix is completely different, and
+    because conflating them produces confidently wrong advice: with Ollama down,
+    every case failed and the diagnosis read "retrieval OK, model fumbled ...
+    tune RAG_PROMPT_TEMPLATE or try a larger model". Nothing was wrong with the
+    prompt or the model. A benchmark that misattributes an infrastructure
+    failure sends you tuning something that was never broken.
+    """
+    return [
+        score.case_id
+        for score in report.generation
+        if ENGINE_ERROR_MARKER in (getattr(score, "answer", "") or "")
+    ]
+
+
 def print_diagnosis(report: EvalReport) -> None:
     """Turn the two stages into a statement about what to go fix."""
     if not report.generation:
         return
+
+    broken = engine_failures(report)
+    if broken:
+        console.print("[bold]Diagnosis[/bold]")
+        console.print(
+            f"  [err]the model server did not answer[/err] — "
+            f"{len(broken)} of {len(report.generation)} case(s)"
+        )
+        console.print(
+            "    [hint]these are not model mistakes; start Ollama and re-run"
+            "[/hint]' + NL + '"
+        )
+        if len(broken) == len(report.generation):
+            # Nothing was measured, so there is nothing to diagnose. Saying
+            # anything else here would be inventing a result.
+            return
     buckets = cross_tabulate(report)
     if not any(buckets[k] for k in ("retrieval_failed", "generation_failed", "both_failed")):
         console.print("[ok]All answerable cases passed both stages.[/ok]\n")
@@ -143,7 +179,17 @@ def print_report(report: EvalReport) -> None:
 
 
 def passed(report: EvalReport, threshold: float) -> bool:
-    """Gate for CI: every measured headline must clear `threshold`."""
+    """Gate for CI: every measured headline must clear `threshold`.
+
+    A run in which the model server never answered is a failure whatever the
+    arithmetic says. Left to the thresholds alone it would still be scored, and
+    a run with Ollama down reported 8% accuracy and *exited zero* — a broken
+    build that called itself a pass, and a metric that moved for a reason
+    nothing to do with the code under test.
+    """
+    if engine_failures(report):
+        return False
+
     checks: list[float] = []
     if report.retrieval_summary.get("n"):
         checks.append(report.retrieval_summary["hit_rate"])
