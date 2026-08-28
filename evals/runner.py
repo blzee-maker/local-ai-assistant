@@ -167,6 +167,18 @@ class EvalRunner:
         judge: bool = True,
         on_case: Callable[[str], None] | None = None,
     ) -> list[metrics.GenerationScore]:
+        # Check the engine answers *before* spending four minutes proving it
+        # does not. Three separate runs in one session scored a dead server:
+        # ninety seconds each, fifteen identical connection errors, and a
+        # summary that read like a model quality problem. Failing in one second
+        # with the real reason is worth more than any number produced after it.
+        if not self.assistant.engine.health_check():
+            raise RuntimeError(
+                "the model server is not reachable at "
+                f"{settings.ollama_host} — start it with `ollama serve`. "
+                "Nothing was measured."
+            )
+
         scores: list[metrics.GenerationScore] = []
 
         for case in self.dataset["cases"]:

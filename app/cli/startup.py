@@ -112,6 +112,11 @@ def _detached_kwargs() -> dict:
 # the daemon was crashing instantly on startup and simply appeared not to run.
 DAEMON_LOG = Path(settings.upload_dir).parent / "daemon.log"
 
+# Ollama when we start it ourselves. Its own installer-managed service logs
+# to %LOCALAPPDATA%, but a server started by `wake` is our child and its
+# output is ours to keep.
+OLLAMA_LOG = Path(settings.upload_dir).parent / "ollama.log"
+
 
 def _background_python() -> str:
     r"""The interpreter to launch detached children with: pythonw.exe if present.
@@ -155,16 +160,30 @@ def ensure_ollama(timeout: float = OLLAMA_START_TIMEOUT) -> StepResult:
             "Ollama is not installed or not on PATH — install it from ollama.com",
         )
 
+    # Its output goes to a file, for the same reason the daemon's does: a
+    # background process whose errors are discarded cannot be diagnosed. This
+    # was DEVNULL, and Ollama died three times in one session on a machine
+    # sitting at 89% memory with no record anywhere of why — `doctor` could
+    # only report "unreachable", which is the symptom and never the cause.
+    try:
+        OLLAMA_LOG.parent.mkdir(parents=True, exist_ok=True)
+        log = OLLAMA_LOG.open("a", encoding="utf-8", errors="replace")
+    except OSError:
+        log = None
+
     try:
         subprocess.Popen(
             [binary, "serve"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if log else subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             **_detached_kwargs(),
         )
     except Exception as exc:
         return StepResult(False, "could not start Ollama: " + str(exc))
+    finally:
+        if log is not None:
+            log.close()  # the child keeps its own inherited handle
 
     # Poll rather than sleeping a fixed amount: it is usually ready in about a
     # second, and an arbitrary wait would make every wake feel slow.
