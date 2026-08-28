@@ -23,6 +23,18 @@ from typing import Any
 # number -- reported 0%. The metric said the property was perfect at the moment
 # it was being violated a quarter of the time.
 _REFUSAL_MARKERS = (
+    # Second round of additions, from the prompt A/B. "not mentioned" was
+    # listed; "does not mention" was not, so two textbook refusals scored as
+    # wrong answers and made one variant look worse than the others when it was
+    # identical. Worth stating plainly: a marker list cannot be finished. It is
+    # a cheap approximation that has now been wrong twice, and the real fix is
+    # the LLM judge (`--no-judge` turns it off), which cannot run in CI because
+    # it needs the model. Until then this list is known-incomplete by design.
+    "does not mention",
+    "doesn t mention",
+    "no mention of",
+    "not listed",
+    "not covered",
     "cannot provide",
     "can not provide",
     "cannot give",

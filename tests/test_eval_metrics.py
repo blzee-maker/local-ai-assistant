@@ -115,3 +115,28 @@ def test_an_absent_question_is_correct_only_when_refused():
 
     assert refused.correct is True
     assert invented.correct is False
+
+
+# ── the second round, from the prompt A/B ────────────────────────
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "The excerpt does not mention the price of the NimbusEdge X1 in US dollars.",
+        "The excerpt does not mention Wi-Fi 7 or Bluetooth 5.4.",
+    ],
+)
+def test_refusals_the_marker_list_missed_a_second_time(answer):
+    """"not mentioned" was listed and "does not mention" was not, so two
+    textbook refusals scored as wrong answers and made one prompt variant look
+    worse than the others when it was producing identical results."""
+    assert metrics.looks_like_refusal(answer), answer
+
+
+def test_the_marker_list_is_documented_as_incomplete():
+    """It has been wrong twice. A lexical list cannot enumerate every way a
+    model can decline, and pretending otherwise is how the metric lied in the
+    first place. The honest fix is the LLM judge, which cannot run in CI."""
+    import inspect
+
+    source = inspect.getsource(metrics)
+    assert "cannot be finished" in source
