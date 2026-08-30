@@ -30,6 +30,13 @@ _REFUSAL_MARKERS = (
     # a cheap approximation that has now been wrong twice, and the real fix is
     # the LLM judge (`--no-judge` turns it off), which cannot run in CI because
     # it needs the model. Until then this list is known-incomplete by design.
+    # Third round, from the model comparison. "cannot determine" was listed and
+    # "cannot be determined" was not; "unable to provide" was listed and "not
+    # able to provide" was not. Each near-miss cost a correct refusal.
+    "cannot be determined",
+    "can not be determined",
+    "not able to provide",
+    "not able to determine",
     "does not mention",
     "doesn t mention",
     "no mention of",

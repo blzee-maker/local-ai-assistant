@@ -140,3 +140,34 @@ def test_the_marker_list_is_documented_as_incomplete():
 
     source = inspect.getsource(metrics)
     assert "cannot be finished" in source
+
+
+# ── the third round, from the model comparison ───────────────────
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "The peak power draw cannot be determined from this reading.",
+        "I am not able to provide information about specific individuals or companies.",
+    ],
+)
+def test_refusals_the_marker_list_missed_a_third_time(answer):
+    """"cannot determine" was listed and "cannot be determined" was not;
+    "unable to provide" was listed and "not able to provide" was not. Three
+    rounds of near-misses in one session is the argument for the judge, not for
+    a longer list."""
+    assert metrics.looks_like_refusal(answer), answer
+
+
+def test_an_invented_answer_is_never_read_as_a_refusal():
+    """The failure that decided the model question. Asked who founded a company
+    that does not exist, qwen2.5:1.5b answered "Halden Systems was founded by
+    John Doe in the year 2000" — a fabricated founder and a fabricated date.
+    Scoring that as a refusal would have hidden the single worst outcome this
+    project has."""
+    invented = "Halden Systems was founded by John Doe in the year 2000."
+
+    assert not metrics.looks_like_refusal(invented)
+
+    absent = {"id": "founders", "kind": "absent", "question": "who founded it?",
+              "expect_refusal": True}
+    assert metrics.score_generation(absent, invented, 0.1, None).correct is False
