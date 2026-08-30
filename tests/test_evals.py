@@ -190,3 +190,75 @@ def test_gold_fragments_actually_appear_in_the_source_document():
             assert metrics.contains(doc, fragment), (
                 f"{case['id']}: '{fragment}' is not in {data['document']}"
             )
+
+
+# ── the knob that moved the number and not the measurement ───────
+class RecordingRag:
+    """A RAG store that answers every query with one chunk and remembers how
+    many were asked for."""
+
+    count = 6
+
+    def __init__(self) -> None:
+        self.asked_for: list[int] = []
+
+    def retrieve(self, query: str, top_k: int) -> list[dict]:
+        self.asked_for.append(top_k)
+        return [{"source": "doc.md", "text": "the peak power draw is 41 watts", "score": 0.4}]
+
+
+class SilentEngine:
+    """Answers nothing. The assertion is about what was retrieved, not said."""
+
+    def health_check(self) -> bool:
+        return True
+
+    def chat_stream(self, messages, options=None):
+        from app.engines.base import StreamEvent
+
+        yield StreamEvent(token="41 watts")
+        yield StreamEvent(done=True, model="fake")
+
+    def chat(self, messages, options=None):
+        return "41 watts"
+
+
+def assistant_with(rag) -> object:
+    from app.core import Assistant
+
+    a = Assistant(engine=SilentEngine())
+    a._rag = rag
+    return a
+
+
+def drain(assistant, question: str, **kwargs) -> None:
+    for _ in assistant.chat_stream(
+        [__import__("app.engines", fromlist=["ChatMessage"]).ChatMessage(
+            role="user", content=question)],
+        use_rag=True,
+        allow_file_access=False,
+        **kwargs,
+    ):
+        pass
+
+
+def test_the_eval_top_k_reaches_the_answer_and_not_just_the_score():
+    """`EvalRunner(top_k=2)` used to score retrieval at 2, print `"top_k": 2` in
+    the run config, and then generate the answer from `settings.rag_top_k`
+    chunks anyway, because `chat_stream` read the setting directly. A sweep over
+    that knob would have produced four different-looking runs of the same
+    experiment — the harness lying about its own independent variable."""
+    rag = RecordingRag()
+    drain(assistant_with(rag), "what is the peak power draw?", top_k=2)
+
+    assert rag.asked_for == [2]
+
+
+def test_omitting_top_k_still_uses_the_configured_default():
+    """The override is for the harness. Ordinary chat must be unchanged."""
+    from config import settings
+
+    rag = RecordingRag()
+    drain(assistant_with(rag), "what is the peak power draw?")
+
+    assert rag.asked_for == [settings.rag_top_k]

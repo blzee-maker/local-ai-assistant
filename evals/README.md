@@ -106,10 +106,11 @@ it looked round.
 | retrieval | hit@4 | **100%** (12 answerable cases) |
 | retrieval | MRR | **1.000** |
 | retrieval | wall time | 0.3s, no model |
-| generation | answerable accuracy | **67%** (8 of 12) |
-| generation | refusal accuracy | **67%** (2 of 3 absent cases) |
+| generation | answerable accuracy | **100%** (12 of 12) |
+| generation | refusal accuracy | **100%** (3 of 3 absent cases) |
 | generation | over-refusal | 0% |
-| generation | wall time | 279s, 18.5s per case |
+| generation | groundedness | 100% (judged, advisory) |
+| generation | wall time | 23.1s per case |
 
 **CI gates retrieval at 0.95**, and nothing else. One miss of twelve is 91.7%,
 so a single regression fails the build. Not 1.0, because embedding scores are
@@ -121,12 +122,49 @@ four and a half minutes, and its score moves with sampling. A gate on a number
 that wobbles teaches people to re-run CI until it goes green, which is worse
 than not measuring it.
 
-The generation figure is the honest headline of this project: **a third of
-answerable questions are still wrong**, with retrieval scoring perfectly on
-every one of them. The failures — `warranty-length`, `founders`,
-`peak-power`, `warranty-paraphrase` — are all cases where the right chunk was
-retrieved at rank 1 and the model still did not produce the fact. That is a
-generation problem, and it is where the next work is.
+### The 67% was never a generation problem
+
+Generation sat at 67% for three sessions with retrieval at a clean 100%, and the
+four failures — `warranty-length`, `founders`, `peak-power`,
+`warranty-paraphrase` — all had the gold chunk at rank 1. Every reading of that
+said the model was fumbling context it had been given.
+
+It had not been given it. `chat_stream` grounds on a tool *or* on retrieval,
+never both, and tool selection ran without knowing a document store existed. So
+`system_status` — whose triggers include "hardware", "power" and "system" — took
+all four questions, retrieval never ran, and the model was shown this laptop's
+CPU and battery and asked how long the warranty on the NimbusEdge X1 was.
+
+The answers said so plainly and three sessions read past it:
+
+> *"I cannot provide information about the peak power draw **of the machine**."*
+
+That is not a refusal. It is a correct report that a CPU-and-battery reading
+contains no wattage. The harness scored it as a generation failure, which sent
+the investigation first at the prompt and then at the model — neither of which
+touches tool dispatch, which is exactly why a full prompt rewrite and a model
+swap both changed the number by zero.
+
+Two things fixed it, and one of them is not about documents at all:
+
+- **`system_status` gave up its bare `power` trigger.** The reading has battery
+  percent and plugged-in state and no watts anywhere, so it was advertising for
+  a question it could not answer.
+- **`search_documents` joins the menu when documents are loaded**, so the model
+  chooses between reading the machine and reading what the user gave it. It
+  returns no content on purpose: winning the selection is its whole job, and the
+  turn then falls through to the retrieval path that already had citations.
+
+`absent-ceo` is the case worth staring at. It *passed* before, because refusing
+to name the CEO of this laptop is indistinguishable from correctly abstaining
+about the handbook. It passes now for the actual reason:
+
+> *"The handbook only mentions that Halden Systems was founded in 2019 by Priya
+> Venkataraman and Tomas Reinholt, but it does not mention who the current CEO
+> is."*
+
+A case passing for the wrong reason is a defect wearing a green tick, and only
+splitting retrieval from generation made it visible at all.
 
 ### A run that measured nothing is never a pass
 

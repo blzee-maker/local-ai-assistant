@@ -118,7 +118,7 @@ python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py ask "..."       # one-shot, pipeable, --json
 python assistant.py scan            # disk analysis (also runnable from chat)
-python -m pytest tests/ -q          # 371 tests
+python -m pytest tests/ -q          # 428 tests
 ```
 
 ## Environment gotchas (Windows)
@@ -291,3 +291,23 @@ These cost real debugging time. Do not rediscover them.
 - Similarity thresholds are *measured against the real embedder*, not guessed.
   A plausible-looking constant tuned against a fake silently dropped real
   recalls; record the probe numbers next to the constant.
+- A tool that grounds a turn **replaces** retrieval, so a read tool with a
+  generous keyword net can silently switch the user's documents off. Four of
+  the eval's four generation failures were `system_status` claiming document
+  questions on "hardware", "power" and "system" — the last matching *inside*
+  "Halden Systems". When documents are loaded they go on the selection menu
+  (`search_documents`), so the model chooses between reading the machine and
+  reading what the user gave it, instead of picking the least-bad machine tool.
+- **Read the answer, not just the score.** "I cannot provide information about
+  the peak power draw *of the machine*" was scored as a refusal for three
+  sessions. It was a correct answer to a question about the wrong subject, and
+  the four words that said so were in every transcript. A metric that buckets an
+  answer cannot tell you it answered something else.
+- When a rewrite and a model swap both move a number by *exactly zero*, stop
+  tuning and go find what neither of them touches. Prompt A/B produced three
+  identical scores; so did the model comparison. Both were measuring a path the
+  failing cases never took.
+- Separating retrieval from generation is what made the bug findable: retrieval
+  scored 100% on cases whose chunks were never sent to the model. Two stages
+  disagreeing that hard is a signal about the *wiring between* them, not about
+  either one.

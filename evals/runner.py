@@ -235,6 +235,7 @@ class EvalRunner:
             allow_file_access=False,
             model=self.model,
             temperature=0.0,
+            top_k=self.top_k,
         ):
             if event.type == "token":
                 parts.append(event.text)

@@ -242,6 +242,7 @@ class Assistant:
         confirm: Callable[[str], bool] | None = None,
         progress: Callable[[str], None] | None = None,
         use_memory: bool = True,
+        top_k: int | None = None,
     ) -> Iterator[AssistantEvent]:
         """Run one turn, yielding token events then a single done/error event.
 
@@ -251,6 +252,12 @@ class Assistant:
         `confirm` lets the front end ask the user before a tool acts. Omitting it
         means every permission question answers "no" — a non-interactive caller
         must not authorise anything by default.
+
+        `top_k` overrides how many chunks ground the answer. It exists for the
+        eval harness, which used to accept a top_k, report it in the run
+        config, and score retrieval with it, while the answer was generated
+        from `settings.rag_top_k` regardless — a knob that moved the number it
+        printed and not the thing it claimed to be measuring.
         """
         turn_history = copy.deepcopy(history)
         if not turn_history or turn_history[0].role != "system":
@@ -285,7 +292,12 @@ class Assistant:
         # `allow_file_access` disables file *reading*, not every capability.
         # Gating the whole registry on it meant `--no-files` also silenced the
         # system tools, so "why is my laptop slow?" fell back to generic advice.
-        excluded = set() if allow_file_access else FILE_ACCESS_TOOLS
+        excluded = set() if allow_file_access else set(FILE_ACCESS_TOOLS)
+        # Nothing ingested, nothing to contest: offering `search_documents`
+        # against an empty index would let the model answer "it is in your
+        # documents" about a store holding none.
+        if not (use_rag and self.rag.count > 0):
+            excluded = excluded | {"search_documents"}
         dispatch = self.tools.dispatch(
             last_user_text,
             self._engine,
@@ -347,7 +359,9 @@ class Assistant:
                 (m for m in reversed(turn_history) if m.role == "user"), None
             )
             if last_user is not None:
-                hits = self.rag.retrieve(last_user.content, settings.rag_top_k)
+                hits = self.rag.retrieve(
+                    last_user.content, top_k if top_k is not None else settings.rag_top_k
+                )
                 if hits:
                     context = "\n\n".join(
                         f"[{i + 1}] (from {h['source']})\n{h['text']}"

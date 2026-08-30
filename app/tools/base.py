@@ -102,6 +102,12 @@ class Tool(Protocol):
     description: str
     risk: Risk
 
+    # A tool that exists only to compete with others for the same questions,
+    # and is dropped when nothing else matched. Without it, a tool broad enough
+    # to contest every message would drag ordinary chat into a tool-selection
+    # round trip it never needed (rule 9).
+    contests_only: bool
+
     def schema(self) -> dict:
         """OpenAI/Ollama-style function schema shown to the model."""
         ...

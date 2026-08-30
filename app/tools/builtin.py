@@ -283,6 +283,7 @@ def default_tools() -> list[Tool]:
 
     from app.tools.apps import app_tools
     from app.tools.disk import PrepareCleanupTool, RunDiskScanTool
+    from app.tools.documents import SearchDocumentsTool
 
     return [
         OpenLocalFileTool(),
@@ -290,6 +291,7 @@ def default_tools() -> list[Tool]:
         RunDiskScanTool(),
         PrepareCleanupTool(),
         RememberTool(),
+        SearchDocumentsTool(),
         *app_tools(),
         *system_tools(),
     ]

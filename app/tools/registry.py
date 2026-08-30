@@ -92,11 +92,19 @@ class ToolRegistry:
         tell them why their machine is slow.
         """
         blocked = exclude or set()
-        return [
+        matched = [
             tool
             for tool in self._tools.values()
             if tool.name not in blocked and tool.matches(text)
         ]
+
+        # A contest-only tool has nothing to contest when it is the only one
+        # that matched, and dropping it there is what keeps ordinary chat free:
+        # `search_documents` matches every message on purpose, so leaving it in
+        # would make "hello" pay for a tool-selection round trip (rule 9).
+        if all(getattr(tool, "contests_only", False) for tool in matched):
+            return []
+        return matched
 
     def select(
         self, text: str, engine, exclude: set[str] | None = None

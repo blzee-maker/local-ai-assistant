@@ -474,7 +474,15 @@ class SystemStatusTool(Tool):
         # components
         "cpu", "processor", "core", "ghz", "memory", "ram", "gb of",
         "disk", "drive", "drives", "storage", "ssd", "hard drive",
-        "battery", "power", "uptime", "operating system", "windows version",
+        # "power" was here as a bare word and it was a claim this tool cannot
+        # back: the reading has battery percent and plugged-in state, and no
+        # wattage anywhere. So "what is the peak power draw?" was answered with
+        # a report containing no watts, and the model — correctly — said it
+        # could not tell you. A tool must stand aside from questions it cannot
+        # answer, and it can only do that if its triggers describe what it
+        # actually holds.
+        "battery", "plugged in", "charging", "power adapter", "on battery",
+        "uptime", "operating system", "windows version",
         # symptoms
         "slow", "sluggish", "freezing", "lagging", "hot", "overheating",
         "resources", "performance", "free space", "how much space",

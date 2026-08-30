@@ -669,13 +669,14 @@ file request. Holding it constant keeps the model warm.
 python -m pytest tests/ -q
 ```
 
-210 tests, all using synthesized fixtures so the suite never reads personal
+428 tests, all using synthesized fixtures so the suite never reads personal
 files. They cover both directions of the integrity verifier (healthy files must
 not be flagged; damaged files must be), the staged duplicate detector, the
 consent scope rules, the read-only guarantee, the offline model guard and model
 fallback, tool routing and permissions, memory recall and forgetting, the
 process-termination guards, daemon scheduling and restraint, the watcher's
-finished-file detection, and the eval harness's own scoring functions.
+finished-file detection, whether a machine reading or the user's documents
+should answer a given question, and the eval harness's own scoring functions.
 
 Two habits worth keeping:
 
