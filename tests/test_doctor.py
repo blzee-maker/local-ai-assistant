@@ -6,11 +6,14 @@ the tick in "check passed" was unencodable and `assistant doctor | tail` died
 with a UnicodeEncodeError while the same command in a console worked. Importing
 the module and calling the function would never have caught it (rule 12).
 
-One run, shared by every test here: doctor talks to Ollama and reads the disk,
-so it costs a few seconds and there is nothing to gain from repeating it.
+One run of the real environment, shared by every test that reads it: doctor
+talks to Ollama and reads the disk, so it costs a few seconds and there is
+nothing to gain from repeating it. A second, deliberately broken run
+(`degraded_run`) covers the one arrangement a working machine cannot produce.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -57,6 +60,49 @@ def test_a_warning_is_never_summarised_as_all_good(doctor_run):
     if "!" in output:
         assert "All good." not in output
         assert "warning(s)" in output
+
+
+@pytest.fixture(scope="module")
+def degraded_run(tmp_path_factory) -> subprocess.CompletedProcess:
+    """A run with a failed check AND a warning — the combination this machine
+    cannot produce.
+
+    Locally Ollama is up and the models are on disk, so doctor either passes
+    outright or warns; CI has neither a model server nor an audio device, and
+    that is the one arrangement where the summary dropped the warnings. Forced
+    here through the real command rather than by calling the function, for the
+    reason the module docstring gives.
+    """
+    env = {
+        **os.environ,
+        # Port 9 (discard) is closed, so the health check is refused rather
+        # than hanging on a timeout.
+        "ASSISTANT_OLLAMA_HOST": "http://127.0.0.1:9",
+        # An empty directory holds no .bin, so the STT check warns.
+        "ASSISTANT_WHISPER_CACHE_DIR": str(tmp_path_factory.mktemp("no-whisper")),
+    }
+    return subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "assistant.py"), "doctor"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        timeout=180,
+    )
+
+
+def test_a_failed_check_does_not_swallow_the_warnings(degraded_run):
+    """CI failed on exactly this: Ollama down and no audio device printed
+    "Some checks failed." and named none of the three warnings above it. The
+    summary short-circuited on the failure, so the only way to see the rest was
+    to fix the server and run again."""
+    output = degraded_run.stdout
+
+    assert "Some checks failed." in output, output
+    assert "!" in output, output      # the run really did warn
+    assert "warning(s)" in output, output
 
 
 def test_speech_to_text_is_checked(doctor_run):

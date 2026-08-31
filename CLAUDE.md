@@ -120,7 +120,7 @@ python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py ask "..."       # one-shot, pipeable, --json
 python assistant.py scan            # disk analysis (also runnable from chat)
 python assistant.py logs            # what happened; --runs, --event, --json
-python -m pytest tests/ -q          # 482 tests
+python -m pytest tests/ -q          # 483 tests
 ```
 
 ## Environment gotchas (Windows)

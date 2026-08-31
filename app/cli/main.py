@@ -1013,13 +1013,20 @@ def doctor() -> None:
         warn("no audio device", "[meta](/mic and /speak unavailable)[/meta]")
 
     console.print()
+    # Warnings are named whether or not a check also failed. They used to be
+    # reported only on an otherwise-clean run, so a machine with Ollama down
+    # *and* three missing pieces summarised all four as "Some checks failed."
+    # — fix the server, re-run, and discover the rest one at a time. Every `!`
+    # printed above is accounted for here.
+    listed = (
+        f"[warn]{len(warnings)} warning(s):[/warn] [meta]{'; '.join(warnings)}[/meta]"
+        if warnings
+        else ""
+    )
     if not ok:
-        console.print("[err]Some checks failed.[/err]")
+        console.print(f"[err]Some checks failed.[/err] {listed}".rstrip())
     elif warnings:
-        console.print(
-            f"[warn]Working, with {len(warnings)} warning(s):[/warn] "
-            f"[meta]{'; '.join(warnings)}[/meta]"
-        )
+        console.print(f"[warn]Working, with[/warn] {listed}")
     else:
         console.print("[ok]All good.[/ok]")
     raise typer.Exit(0 if ok else 1)
