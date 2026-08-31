@@ -38,6 +38,8 @@ data/daemon.sqlite3
 data/daemon.pid
 data/daemon.log
 data/ollama.log
+data/events.jsonl
+data/events.jsonl.1
 data/voice_device.json
 
 # Generated cleanup scripts list real paths from the user's folders.

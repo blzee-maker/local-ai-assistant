@@ -8,12 +8,14 @@ a file shouldn't cost you your context.
 from __future__ import annotations
 
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 
+from app import eventlog
 from app.cli import audio, render
 from app.cli.render import console
 from app.core import Assistant
@@ -309,34 +311,61 @@ def confirm_action(prompt: str) -> bool:
     return answer in {"y", "yes"}
 
 
-# Wide enough to cover the longest phase name plus a count. The padding is the
-# point: a carriage return moves the cursor back but erases nothing, so a short
-# message after a long one leaves the tail of the long one on screen.
-PROGRESS_WIDTH = 64
-
-
 def show_progress(message: str) -> None:
     """One rewritten line for work measured in minutes.
 
     Overwrites in place rather than scrolling: a scan emits hundreds of updates
     and a screen of them buries the conversation that follows.
+
+    The padding and the wiping both live in `render` now. They used to live
+    here, and the message "done" was the only thing that wiped -- so a tool
+    that never sent it left its line on screen for the reply to land on top of,
+    which is how "Opened Spotify." over "opening Spotify" rendered as
+    "Opened Spotify.g Spotify".
     """
     if message == "done":
-        # Wipe the line so the answer does not start halfway along it.
-        console.print(" " * PROGRESS_WIDTH, end="\r", highlight=False)
+        render.clear_transient()
         return
-    console.print(
-        f"[meta]  {message:<{PROGRESS_WIDTH - 2}}[/meta]", end="\r", highlight=False
-    )
+    render.transient(message)
+
+
+def _rounded(value: float | None, places: int = 2) -> float | None:
+    """Timings go in the log to be read, not to be summed."""
+    return None if value is None else round(value, places)
 
 
 def run_turn(assistant: Assistant, session: Session, text: str) -> None:
     """Send one user message and stream the reply."""
     session.history.append(ChatMessage(role="user", content=text))
+    eventlog.log(
+        "turn.start",
+        prompt=text,
+        rag=session.use_rag,
+        files=session.allow_files,
+        model=session.model,
+        history=len(session.history),
+    )
+    started = time.time()
 
-    console.print(f"[bot]{BOT_LABEL}[/bot] ", end="")
     collected: list[str] = []
     terminal = None
+    label_shown = False
+
+    def emit_label() -> None:
+        """Print the speaker label once, immediately before the first output.
+
+        Printed lazily rather than up front because it used to go out before
+        the stream started, and the first progress line -- which returns the
+        cursor to column 0 -- wrote straight over it. A turn that ran a tool
+        came back with no speaker on it at all.
+        """
+        nonlocal label_shown
+        if label_shown:
+            return
+        render.clear_transient()
+        console.print(f"[bot]{BOT_LABEL}[/bot] ", end="")
+        label_shown = True
+
     try:
         for event in assistant.chat_stream(
             session.history,
@@ -349,11 +378,15 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
         ):
             if event.type == "token":
                 collected.append(event.text)
+                emit_label()
                 render.stream_token(event.text)
             else:
                 terminal = event
     except KeyboardInterrupt:
         # Abandon this generation but keep the session alive.
+        eventlog.log("turn.interrupted", took_s=round(time.time() - started, 2),
+                     partial_chars=len("".join(collected)))
+        emit_label()
         render.end_stream()
         console.print("[warn]interrupted[/warn]")
 
@@ -366,18 +399,46 @@ def run_turn(assistant: Assistant, session: Session, text: str) -> None:
         assistant.memory.record("assistant", reply)
 
     if terminal is not None and terminal.type == "error":
+        eventlog.log("turn.error", error=str(terminal.error),
+                     took_s=round(time.time() - started, 2))
+        # A turn that produced no tokens never emitted the label, and an error
+        # must not inherit a half-drawn progress line either.
+        render.clear_transient()
         console.print(f"[err]{terminal.error}[/err]")
         # A failed turn must not leave a dangling user message in history.
         session.history.pop()
         return
 
     if not reply:
+        # A turn that produced nothing at all, with no error to explain it.
+        # Silent from the screen and, until now, silent afterwards too.
+        eventlog.log("turn.empty", took_s=round(time.time() - started, 2))
+        render.clear_transient()
         session.history.pop()
         return
 
     session.history.append(ChatMessage(role="assistant", content=reply))
 
     if terminal is not None:
+        metrics = terminal.metrics or {}
+        tool = terminal.tool_used or {}
+        eventlog.log(
+            "turn.end",
+            took_s=round(time.time() - started, 2),
+            reply_chars=len(reply),
+            model=metrics.get("model"),
+            # The reason this field exists: a weaker model answering is the
+            # single most common cause of "why was that answer worse today",
+            # and on a machine this tight it happens without anything failing.
+            fell_back=bool(metrics.get("fell_back")),
+            determined=bool(metrics.get("determined")),
+            tokens=metrics.get("completion_tokens"),
+            ttft_s=_rounded(metrics.get("time_to_first_token_s")),
+            tool=tool.get("tool"),
+            tool_failed=bool(tool.get("failed")) if tool else None,
+            sources=len(terminal.sources or []),
+            recalled=bool(terminal.recalled),
+        )
         render.print_recalled(terminal.recalled)
         render.print_tool_used(terminal.tool_used)
         render.print_sources(terminal.sources)
@@ -513,8 +574,20 @@ def run(
             else "[meta]no earlier conversation to resume[/meta]"
         )
 
+    eventlog.log(
+        "session.start",
+        mode="chat",
+        rag=session.use_rag,
+        files=session.allow_files,
+        speak=session.speak,
+        resumed=resume,
+    )
+
     health = assistant.health()
     if not health["healthy"]:
+        # The commonest "nothing works" cause on this machine, and the one a
+        # user is least likely to still have on screen an hour later.
+        eventlog.log("backend.unreachable", engine=health.get("engine"))
         console.print(
             f"[err]Cannot reach the {health['engine']} backend.[/err] "
             "[hint]Is `ollama serve` running? Run `doctor` for details.[/hint]"
@@ -535,10 +608,15 @@ def run(
         if not line:
             continue
         if line.startswith("/"):
+            # The name only. A slash command's arguments are file paths and
+            # search terms -- the user's own words, which this log does not keep.
+            parts = line[1:].split()
+            eventlog.log("command", name=parts[0].lower() if parts else "")
             if not handle_command(assistant, session, line):
                 break
             continue
 
         run_turn(assistant, session, line)
 
+    eventlog.log("session.end", mode="chat")
     console.print("\n[meta]bye[/meta]")

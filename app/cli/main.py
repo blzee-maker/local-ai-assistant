@@ -1086,6 +1086,87 @@ def wake(
 
 
 @cli.command()
+def logs(
+    limit: int = typer.Option(40, "--limit", "-n", help="How many entries to show."),
+    event: str = typer.Option(None, "--event", "-e", help="Only this event type."),
+    session: str = typer.Option(None, "--session", "-s", help="Only this run."),
+    runs: bool = typer.Option(False, "--runs", help="List recent runs instead."),
+    as_json: bool = typer.Option(False, "--json", help="Raw entries, one per line."),
+) -> None:
+    """Read back what happened — especially in a voice session, which scrolls past."""
+    from app import eventlog
+
+    if runs:
+        found = eventlog.sessions()
+        if not found:
+            console.print("[warn]nothing logged yet[/warn]")
+            return
+        for info in found:
+            started = time.strftime("%m-%d %H:%M", time.localtime(info["started"]))
+            length = (info.get("last") or info["started"]) - info["started"]
+            console.print(
+                f"  [meta]{info['session']}[/meta]  {started}  "
+                f"[meta]{info['events']} events over {render.fmt_duration(length)}[/meta]"
+            )
+        return
+
+    entries = eventlog.read(limit=limit, event=event, session=session)
+    if not entries:
+        # Three different situations that all used to print "nothing logged
+        # yet" over a path — which reads as a broken destination when usually
+        # it just means nothing has run yet, or the filter was too narrow.
+        target = eventlog.path()
+        if not target.exists():
+            console.print(
+                "[warn]no log yet[/warn] [hint]it is written on the first chat "
+                f"or voice session — {target}[/hint]"
+            )
+        elif not eventlog.read(limit=0):
+            console.print(f"[warn]the log is empty[/warn] [hint]{target}[/hint]")
+        else:
+            console.print(
+                "[warn]nothing matches that filter[/warn] "
+                "[hint]try `logs --runs`, or drop --event/--session[/hint]"
+            )
+        return
+
+    if as_json:
+        for entry in entries:
+            print(json.dumps(entry, ensure_ascii=False))
+        return
+
+    for entry in entries:
+        when = time.strftime("%H:%M:%S", time.localtime(entry.get("at", 0)))
+        name = entry.get("event", "?")
+        # Everything that is not scaffolding is detail, rendered generically:
+        # the events this log carries will keep changing, and a renderer that
+        # knows each one by name goes stale silently.
+        detail = {
+            key: value
+            for key, value in entry.items()
+            if key not in {"at", "session", "event"}
+        }
+        # Every redacted field, not just the first one that existed: `prompt`
+        # was added later and printed as a raw dict until this stopped naming
+        # them one at a time.
+        for field in eventlog.REDACTED_FIELDS:
+            value = detail.get(field)
+            if isinstance(value, dict) and value.get("redacted"):
+                detail[field] = f"<{value.get('words')} words, not recorded>"
+            elif value is not None:
+                detail[field] = repr(value)
+        rest = "  ".join(f"{k}={v}" for k, v in detail.items())
+        style = "err" if "fail" in name else "meta"
+        console.print(f"  [meta]{when}[/meta]  [{style}]{name:<20}[/{style}] [meta]{rest}[/meta]")
+
+    if not settings.log_transcripts:
+        console.print(
+            "\n[hint]what was said is not recorded — set log_transcripts to "
+            "change that[/hint]"
+        )
+
+
+@cli.command()
 def sleep(
     words: list[str] = typer.Argument(None, help="Ignored, so 'sleep buddy' works."),
 ) -> None:

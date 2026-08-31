@@ -111,6 +111,20 @@ class Settings(BaseSettings):
     daemon_scan_interval_hours: float = 168.0   # weekly
     daemon_tick_seconds: float = 30.0           # how often due jobs are checked
 
+    # Event log. Read back with `assistant logs` when something misbehaved.
+    event_log_path: str = "data/events.jsonl"
+    # One previous file is kept and no more. This log answers "what just
+    # happened", so history beyond that costs disk on a machine short of it.
+    event_log_max_bytes: int = 2_000_000
+    # Whether what the user said out loud is written down verbatim.
+    #
+    # Off, because a voice log with this on is a transcript of the room, kept
+    # indefinitely, that nobody asked for. Most voice bugs are legible without
+    # it: a redacted entry still carries the word count, the gate's decision and
+    # the timings, which is what distinguishes "misheard" from "never heard"
+    # from "heard and ignored". Turn it on deliberately when it is not enough.
+    log_transcripts: bool = False
+
     # Local file browsing (Phase 4.5). Only these roots are ever exposed.
     allowed_file_dirs: list[str] = Field(default_factory=_default_file_dirs)
     file_search_max_results: int = 25
@@ -138,6 +152,7 @@ class Settings(BaseSettings):
             "upload_dir",
             "whisper_cache_dir",
             "piper_voice_path",
+            "event_log_path",
         ):
             value = Path(getattr(self, field))
             if not value.is_absolute():

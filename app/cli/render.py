@@ -54,6 +54,51 @@ console = Console(theme=THEME, soft_wrap=False)
 err_console = Console(theme=THEME, stderr=True)
 
 
+# Wide enough to cover the longest phase name plus a count. The padding is the
+# point: a carriage return moves the cursor back but erases nothing, so a short
+# message after a long one leaves the tail of the long one on screen.
+TRANSIENT_WIDTH = 64
+
+# Whether a rewritten line is currently sitting on screen unwiped.
+#
+# Tracked here rather than left to callers because the previous design made
+# wiping the *tool's* job — the line was only cleared when a tool reported the
+# literal message "done", and exactly one tool in the codebase ever did. Every
+# other tool left its progress line behind for the next write to land on top
+# of, which is how "Opened Spotify." over "...opening Spotify" rendered as
+# "Opened Spotify.g Spotify". A tool that forgets to announce it finished must
+# not be able to corrupt the screen.
+_transient_pending = False
+
+
+def transient(message: str) -> None:
+    """Draw a line that the next write is expected to overwrite."""
+    global _transient_pending
+    sys.stdout.write(f"  {message:<{TRANSIENT_WIDTH - 2}}\r")
+    sys.stdout.flush()
+    _transient_pending = True
+
+
+def clear_transient() -> None:
+    """Wipe a pending rewritten line, if there is one.
+
+    Safe to call unconditionally — that is the whole point. Every path that
+    prints real output calls this first, so correctness no longer depends on
+    each tool remembering to send a completion message.
+    """
+    global _transient_pending
+    if not _transient_pending:
+        return
+    sys.stdout.write(" " * TRANSIENT_WIDTH + "\r")
+    sys.stdout.flush()
+    _transient_pending = False
+
+
+def transient_pending() -> bool:
+    """Whether a rewritten line is still on screen. For tests."""
+    return _transient_pending
+
+
 def stream_token(text: str) -> None:
     """Write one token with no markup interpretation and no buffering delay."""
     sys.stdout.write(text)

@@ -103,6 +103,7 @@ app/memory/     Conversation persistence + explicitly-remembered facts.
 app/daemon/     Scheduled background jobs. Runs with no confirmer attached.
 app/windows.py  Win32 window + app-launch primitives. UI-neutral.
 app/consent.py  Recorded, scoped permission for reading user folders.
+app/eventlog.py Append-only JSONL record of what happened, for reading back.
 evals/          Golden-dataset RAG benchmark.
 ```
 
@@ -118,7 +119,8 @@ python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py converse        # hands-free: say the wake phrase, then talk
 python assistant.py ask "..."       # one-shot, pipeable, --json
 python assistant.py scan            # disk analysis (also runnable from chat)
-python -m pytest tests/ -q          # 428 tests
+python assistant.py logs            # what happened; --runs, --event, --json
+python -m pytest tests/ -q          # 482 tests
 ```
 
 ## Environment gotchas (Windows)
@@ -307,6 +309,24 @@ These cost real debugging time. Do not rediscover them.
   tuning and go find what neither of them touches. Prompt A/B produced three
   identical scores; so did the model comparison. Both were measuring a path the
   failing cases never took.
+- Instrumenting one front end is instrumenting none. Voice was logged first
+  and text chat was not, so `logs` was empty for the path the user actually
+  spends their day in — and empty reads as "nothing broke", not as "nothing
+  was recorded". `run_turn` is the seam both front ends share.
+- A voice session is the one part of this program the user cannot inspect
+  while it runs — chat scrolls, the loop between turns does not. So state
+  changes go through one funnel that both prints and records
+  (`voiceloop.emit`): a log that disagrees with the screen is worse than no
+  log, because it gets believed. `logs` reads it back.
+- The event log is JSONL under a lock, not sqlite, because the awake window is
+  watched by a `threading.Timer` and sqlite connections belong to one thread —
+  the mistake already made once in `app/daemon/watcher.py`.
+- What the user said out loud is **not** written down by default. A voice log
+  with transcripts on is a persistent record of the room that nobody asked for,
+  and most voice bugs are legible without it: the word count, the gate's
+  decision and the timings already separate "misheard" from "never heard" from
+  "heard and ignored". The redaction lives in the logger, not at each call site
+  (`log_transcripts` turns it on deliberately).
 - Separating retrieval from generation is what made the bug findable: retrieval
   scored 100% on cases whose chunks were never sent to the model. Two stages
   disagreeing that hard is a signal about the *wiring between* them, not about

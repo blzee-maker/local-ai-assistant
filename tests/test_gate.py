@@ -55,18 +55,76 @@ def test_each_command_refreshes_the_window():
     assert d.action == "run"
 
 
-def test_speech_after_the_window_lapses_is_ignored():
+def test_speech_after_the_window_lapses_is_never_run():
+    """The guarantee is that it does not run. It reports the lapse as well now,
+    but "reported" and "acted on" must not be allowed to drift into each other:
+    assert the safety property, then the label."""
     g = gate()
     g.consider("Wake up buddy.", now=0.0)           # awake until 12.0
     d = g.consider("someone talking in the room", now=15.0)
-    assert d.action == "ignore"
+    assert d.action != "run"
+    assert d.command == ""
+    assert d.action == "lapsed"
+
+
+def test_the_lapse_is_reported_once_and_then_the_room_is_ignored():
+    """Said once because the speaker was plainly addressing us and deserves to
+    know why nothing happened. Not twice, because a gate that narrates every
+    overheard sentence is one nobody leaves running."""
+    g = gate()
+    g.consider("Wake up buddy.", now=0.0)
+    assert g.consider("are you there", now=15.0).action == "lapsed"
+    assert g.consider("someone else talking", now=16.0).action == "ignore"
+    assert g.consider("and more chatter", now=17.0).action == "ignore"
+
+
+def test_a_gate_that_was_never_awake_reports_nothing():
+    """"You spoke too late" and "that was not addressed to me" are different
+    facts. Only the first is worth saying, and only if the window had opened."""
+    g = gate()
+    assert g.consider("open spotify", now=0.0).action == "ignore"
+    assert g.consider("delete everything", now=1.0).action == "ignore"
 
 
 def test_it_must_be_re_woken_after_going_quiet():
     g = gate()
     g.consider("Wake up buddy, what is my disk usage.", now=0.0)
-    assert g.consider("open spotify", now=30.0).action == "ignore"   # lapsed
+    assert g.consider("open spotify", now=30.0).action != "run"      # lapsed
     assert g.consider("Wake up buddy, open spotify.", now=31.0).action == "run"
+
+
+# ── being told the window is open, and how long for ──────────────
+def test_wake_opens_the_window_without_a_spoken_phrase():
+    """Typing `/listen` is the intent; asking for the wake phrase straight
+    afterwards asks the same question twice."""
+    g = gate()
+    assert not g.is_awake(0.0)
+    g.wake(0.0)
+    assert g.is_awake(0.0)
+    assert g.consider("what time is it", now=1.0).action == "run"
+
+
+def test_remaining_decays_and_bottoms_out_at_zero():
+    g = gate()
+    g.wake(0.0)
+    assert g.remaining(0.0) == WINDOW
+    assert g.remaining(6.0) == WINDOW - 6.0
+    # Never negative: the loop renders this number, and "-4s left" is worse
+    # than useless.
+    assert g.remaining(WINDOW + 5.0) == 0.0
+
+
+def test_remaining_is_zero_while_asleep():
+    assert gate().remaining(0.0) == 0.0
+
+
+def test_a_reported_lapse_is_not_reported_again_by_the_gate():
+    """The loop watches the clock as well, because it can sit blocked on the
+    microphone for minutes. Whichever notices first suppresses the other."""
+    g = gate()
+    g.wake(0.0)
+    g.note_lapse_reported()                          # the watchdog got there first
+    assert g.consider("are you there", now=99.0).action == "ignore"
 
 
 # ── ending the conversation ──────────────────────────────────────
@@ -101,3 +159,10 @@ def test_while_awake_any_speech_is_a_command():
 def test_empty_transcript_is_ignored():
     assert gate().consider("", now=0.0).action == "ignore"
     assert gate().consider("   ", now=0.0).action == "ignore"
+
+
+def test_the_window_is_readable():
+    """The log records the window actually in force. Re-reading the configured
+    default instead produced an entry saying 12s directly above one saying 2s
+    remained."""
+    assert ConversationGate(PHRASE, 2.0).window == 2.0
