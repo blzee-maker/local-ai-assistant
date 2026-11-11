@@ -1,0 +1,175 @@
+{
+  "measurement": {
+    "query_count": 30,
+    "runs_per_query": 3,
+    "warmup_queries_excluded_per_top_k": 5,
+    "cold_start_ms": 395.8112999998775,
+    "cold_start_scope": "RagService construction (including its embedding dimension probe and FAISS index load) plus the first retrieval; excludes Python interpreter startup and imports.",
+    "cold_start_caveat": "The model was already present in the local cache and downloads were disabled. The corpus index was built immediately before measurement, so filesystem-cache state was not controlled.",
+    "cold_query": "Who founded Halden Systems, and in what year?",
+    "cold_query_component_times": {
+      "embedding_ms": 34.29099999993923,
+      "search_ms": 0.1612000000932312
+    },
+    "timing_clock": "time.perf_counter()",
+    "p95_method": "linear interpolation at rank (n - 1) * 0.95",
+    "retrieval_path": "RagService.retrieve -> Embedder.embed -> VectorStore.search",
+    "llm_generation_included": false
+  },
+  "environment": {
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "ram_total_bytes": 8358518784,
+    "ram_available_bytes_before_benchmark": 1072209920,
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.1",
+    "libraries": {
+      "faiss": "1.15.0",
+      "onnxruntime": "1.28.0",
+      "numpy": "2.5.1",
+      "fastembed": "0.8.0"
+    },
+    "onnxruntime_available_providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "gpu_used": false,
+    "gpu_usage_basis": "Captured from InferenceSession.get_providers() on the live ONNX Runtime session used by FastEmbed.",
+    "other_processes_at_least_200_mib_rss": [
+      {
+        "name": "MemCompression",
+        "rss_mib": 453.328125
+      },
+      {
+        "name": "Code.exe",
+        "rss_mib": 428.1796875
+      },
+      {
+        "name": "Code.exe",
+        "rss_mib": 272.890625
+      },
+      {
+        "name": "Code.exe",
+        "rss_mib": 247.68359375
+      },
+      {
+        "name": "copilot-runtime.exe",
+        "rss_mib": 229.625
+      },
+      {
+        "name": "MsMpEng.exe",
+        "rss_mib": 219.328125
+      }
+    ],
+    "onnxruntime_selected_providers": [
+      "CPUExecutionProvider"
+    ]
+  },
+  "corpus": {
+    "corpus_dir": "C:\\Projects\\local-ai-assistant\\sample_docs",
+    "files": [
+      "nimbusedge_handbook.md"
+    ],
+    "file_count": 1,
+    "total_chunks": 6,
+    "ingestion": [
+      {
+        "source": "nimbusedge_handbook.md",
+        "chunks": 6
+      }
+    ],
+    "index_dimension": 384,
+    "index_type": "IndexFlatIP"
+  },
+  "benchmarks": [
+    {
+      "top_k": 4,
+      "query_count": 30,
+      "runs_per_query": 3,
+      "warmup_queries_excluded": 5,
+      "measured_retrievals": 90,
+      "chunks_returned_across_measured_retrievals": 360,
+      "timings": {
+        "embedding": {
+          "median_ms": 29.89074999982222,
+          "mean_ms": 31.584846666641575,
+          "p95_ms": 46.715600000197796,
+          "min_ms": 19.84179999999469,
+          "max_ms": 61.58259999983784
+        },
+        "search": {
+          "median_ms": 0.06304999988060445,
+          "mean_ms": 0.08022666662428593,
+          "p95_ms": 0.24769500025740826,
+          "min_ms": 0.04379999973025406,
+          "max_ms": 0.35970000044471817
+        },
+        "total": {
+          "median_ms": 29.94884999975511,
+          "mean_ms": 31.67848888891361,
+          "p95_ms": 46.93322499988425,
+          "min_ms": 19.9176000000989,
+          "max_ms": 61.67219999997542
+        }
+      }
+    },
+    {
+      "top_k": 5,
+      "query_count": 30,
+      "runs_per_query": 3,
+      "warmup_queries_excluded": 5,
+      "measured_retrievals": 90,
+      "chunks_returned_across_measured_retrievals": 450,
+      "timings": {
+        "embedding": {
+          "median_ms": 30.568749999929423,
+          "mean_ms": 30.820551111087802,
+          "p95_ms": 33.79310499994972,
+          "min_ms": 19.173700000010285,
+          "max_ms": 110.67110000021785
+        },
+        "search": {
+          "median_ms": 0.0629000001026725,
+          "mean_ms": 0.07103444445925157,
+          "p95_ms": 0.11932499996873946,
+          "min_ms": 0.048100000185513636,
+          "max_ms": 0.3011000003425579
+        },
+        "total": {
+          "median_ms": 30.64324999991186,
+          "mean_ms": 30.90255444442644,
+          "p95_ms": 33.910950000085904,
+          "min_ms": 19.24060000010286,
+          "max_ms": 110.74830000006841
+        }
+      }
+    }
+  ],
+  "sanity_samples": [
+    {
+      "query": "What is the peak power draw of the X1?",
+      "expected_evidence": "41 watts",
+      "top_result_source": "nimbusedge_handbook.md",
+      "top_result_score": 0.3671985864639282,
+      "top_result_text": "Hardware specifications\n| Component | Specification |\n|-----------|---------------|\n| Processor | Halden HX-7 octa-core NPU |\n| Memory | 24 GB LPDDR5X unified |\n| Storage | 1 TB NVMe (encrypted at rest) |\n| Max model context | 16,384 tokens |\n| Idle power draw | 6 watts |\n| Peak power draw | 41 watts |\n| Operating temperature | 0°C to 45°C |\n| Dimensions | 148mm × 148mm × 34mm |\n| Weight | 620 grams |\n\nThe X1 ships with three preloaded models: **Aurora-2B**, **Aurora-7B**, and the\ncode-specialized **Aurora-Coder-3B**. Additional models can be side-loaded over\nUSB-C only — there is deliberately no network model download path."
+    },
+    {
+      "query": "Who founded Halden Systems, and in what year?",
+      "expected_evidence": "Priya Venkataraman",
+      "top_result_source": "nimbusedge_handbook.md",
+      "top_result_score": 0.48719245195388794,
+      "top_result_text": "Overview\nThe **NimbusEdge X1** is a compact edge-AI appliance built by Halden Systems for\nrunning small language models fully offline. It is marketed to hospitals, law\nfirms, and defense contractors where data must never leave the premises.\n\nHalden Systems was founded in **2019** by Priya Venkataraman and Tomas Reinholt\nin Tallinn, Estonia. The NimbusEdge product line launched in **August 2024**."
+    },
+    {
+      "query": "How can the wireless radios be physically disabled?",
+      "expected_evidence": "kill switch",
+      "top_result_source": "nimbusedge_handbook.md",
+      "top_result_score": 0.43870508670806885,
+      "top_result_text": "Security posture\n- All storage is encrypted at rest using XTS-AES-256.\n- The firmware enforces **secure boot** with Halden-signed images only.\n- A physical **kill switch** on the rear panel severs all wireless radios.\n- Factory reset requires the physical **recovery key**, a 40-character code\n  printed on a card included in the box. Halden cannot recover a lost key."
+    }
+  ],
+  "caveats": [
+    "The in-repository sample corpus contains 1 file and 6 vectors; these measurements do not establish latency at larger corpus sizes.",
+    "The cold-start figure measures a fresh benchmark process with local model files already cached; it excludes interpreter startup/imports and any first-time model download.",
+    "Other background processes were active; their observed memory use is listed in the environment section."
+  ]
+}

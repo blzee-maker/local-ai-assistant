@@ -14,6 +14,53 @@ data-privacy, latency-bound, and edge-deployment engineering.
 > those capabilities refuse rather than pretend. Said here rather than
 > discovered halfway through setup.
 
+## Product case study
+
+This project addresses a specific user problem: people want AI help grounded in
+local files, machine context, and day-to-day work without sending prompts or
+private data to a remote service. The product is built for users who need useful
+AI assistance on an offline Windows machine, in a constrained environment, with
+clear limits on what the assistant is allowed to do.
+
+### MVP approach
+
+The first version focuses on the highest-value local AI workflow: a command-line
+assistant that can answer questions from local documents, reason over a small
+local knowledge base via RAG, and inspect the machine with explicit, guarded
+capabilities. The implementation couples a small local SLM with offline
+embeddings, a local vector store, and Windows-specific system awareness, rather
+than trying to be a broad enterprise platform from day one. That keeps the MVP
+small, testable, and aligned to the product's core trust guarantee.
+
+### Key product decisions
+
+- **Offline-first by default**: inference and document handling stay on-device,
+  and cloud model names are blocked at the policy layer rather than left to user
+  memory.
+- **Edge-aware product design**: the app is explicitly optimized for ~8GB RAM,
+  including fallback model handling and degraded-mode messaging when the main
+  model cannot load.
+- **Capability discipline**: the app exposes a narrow, deterministic set of local
+  actions (document search, disk analysis, app awareness, and process-backed
+  system controls) instead of hiding broad automation behind vague prompts.
+- **Trust-centered UX**: explicit warnings, model-fallback reporting, and refusal
+  paths are part of the product experience, because the value proposition depends
+  on users believing the assistant is actually local and safe.
+
+### Proposed validation
+
+This is a proposed validation plan, not claimed product evidence. The product
+would be validated in a small pilot around realistic local workflows: answering
+questions from local docs, retrieving from a local knowledge base, running disk
+analysis, and using the assistant in a normal Windows session without external
+connectivity. Success would be judged by whether users can complete those tasks
+without cloud routing, whether first-use latency remains acceptable on modest
+hardware, and whether users report confidence that private data stayed local.
+
+In other words, the product is designed to win on trust, bounded scope, and
+practical local usefulness rather than on raw model breadth or broad cloud
+features.
+
 ## Architecture
 
 ```

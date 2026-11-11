@@ -1,0 +1,30 @@
+Who founded Halden Systems, and in what year?
+Where was Halden Systems founded?
+When did the NimbusEdge product line launch?
+What processor does the NimbusEdge X1 use?
+How much memory does the NimbusEdge X1 have?
+What kind of storage is inside the X1, and is it encrypted?
+What is the maximum model context size?
+How much power does the X1 use when idle?
+What is the peak power draw of the X1?
+What temperature range can the device operate in?
+What are the X1's dimensions and weight?
+Which models ship preloaded on the device?
+How can additional models be side-loaded?
+What is the standard hardware warranty period?
+How long does NimbusCare Plus extend coverage?
+How quickly does standard support respond?
+What response time do NimbusCare Plus customers receive?
+Does the device phone home?
+How can an administrator export telemetry?
+What encryption standard protects storage at rest?
+What does secure boot require?
+How can the wireless radios be physically disabled?
+What is required to perform a factory reset?
+How long is the recovery key?
+Which healthcare and privacy certifications does the device hold?
+What FIPS validation does the cryptographic module have?
+What does Sealed Mode disable?
+How can Sealed Mode be turned off?
+Which customers are the NimbusEdge X1 marketed to?
+Where is the offline support portal contact listed?
